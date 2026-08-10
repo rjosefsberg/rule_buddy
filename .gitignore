@@ -1,0 +1,31 @@
+# Secrets. config.example.json is the tracked template; config.json holds a real key.
+config.json
+
+# Built indexes. Rebuild with: python rulebook.py index yourbook.pdf
+*.db
+*.db-wal
+*.db-shm
+
+# Source books. Large, and not ours to redistribute.
+*.pdf
+
+# Handoff bundle and PyInstaller output
+RuleBuddy-Drive/
+build_out/
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Editors and OS
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+.DS_Store

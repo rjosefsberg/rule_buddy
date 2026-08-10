@@ -1,0 +1,5 @@
+{
+  "api_key": "sk-ant-...",
+  "model": "claude-sonnet-5",
+  "db": "rulebook.db"
+}
