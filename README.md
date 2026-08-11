@@ -127,6 +127,20 @@ python -m rulebuddy.indexer --db books/x.db cover book.pdf   # backfill a cover
 
 Every subcommand takes `--db` to pick which index it works on.
 
+## Tests
+
+```sh
+python -m unittest discover -s tests
+```
+
+Standard library only, and under a second: no PDFs and no Tk. Indexing a real
+book takes a quarter of a minute and needs a copyrighted file that is not in the
+repository, and the window is checked by hand. What the tests cover is the
+bookkeeping that breaks quietly — the version 1 migration, sections and the full
+text index staying in step as books come and go, excerpts carrying the name of
+the book they came from, and the key never reaching config.json when it was not
+meant to.
+
 ## Packaging a standalone build
 
 To hand the app to someone who does not have Python:
@@ -168,6 +182,7 @@ Rotate the key when the loan ends.
 rule_buddy/
   config.example.json      settings template
   build.py                 makes the jump-drive folder
+  tests/                   python -m unittest discover -s tests
   run.py                   entry point PyInstaller builds from
   READ ME FIRST.txt        ships with the drive folder
   books/                   the .db indexes, one per system
