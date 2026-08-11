@@ -123,12 +123,14 @@ class App(tk.Tk):
         self.inbox = queue.Queue()
         self.busy = False
         self.transcript = None
+        self.showing_cover = False
+        self.big_cover = None
         # Written answers follow the key: present means on, and the Mode menu
         # can turn them off again without throwing the key away.
         self.want_ai = tk.BooleanVar(value=core.has_key())
 
         self.title(self.book_name())
-        self.geometry("1260x800")
+        self.geometry("1800x880")
         self.minsize(620, 420)
         self.set_theme()
         self.build_menu()
@@ -155,15 +157,38 @@ class App(tk.Tk):
             "warn": "#D08A6A" if self.dark else "#9A3D16",
             "quote": "#2A2A2A" if self.dark else "#F4F5F6",
             "rule": "#3A3A3A" if self.dark else "#D2D6DA",
+            # The reading surface is its own material: warmer than the chrome,
+            # so the book reads as paper and the app around it does not.
+            "paper": "#22211F" if self.dark else "#FBF8F1",
+            "paperink": "#E6E1D6" if self.dark else "#241F17",
         }
         self.base_size = tkfont.nametofont("TkTextFont").actual("size") or 13
         self.scale = 0
 
+    def pick_family(self, wanted, fallback):
+        """First of `wanted` the system actually has, else the stock face."""
+        if not hasattr(self, "_families"):
+            self._families = {name.lower() for name in tkfont.families(self)}
+        for name in wanted:
+            if name.lower() in self._families:
+                return name
+        return fallback
+
     def fonts(self):
+        """Two voices: the book is set in serif, the app around it is not.
+
+        Prose out of the rulebook — excerpts and answers — reads better with
+        the face a book would use, and the contrast keeps chrome from being
+        mistaken for content. Metadata stays mono so it reads as machinery.
+        """
         size = self.base_size + self.scale
         family = tkfont.nametofont("TkTextFont").actual("family")
-        mono = "Menlo" if sys.platform == "darwin" else (
-            "Consolas" if sys.platform == "win32" else "DejaVu Sans Mono")
+        mono = self.pick_family(
+            ["Menlo", "Consolas", "DejaVu Sans Mono", "Courier New"], family)
+        serif = self.pick_family(
+            ["Cambria", "Georgia", "Iowan Old Style", "Palatino Linotype",
+             "Palatino", "DejaVu Serif", "Times New Roman"], family)
+        read = size + 3                      # serif faces run small at the same size
         return {
             "body": tkfont.Font(family=family, size=size),
             "bold": tkfont.Font(family=family, size=size, weight="bold"),
@@ -172,25 +197,37 @@ class App(tk.Tk):
             "italic": tkfont.Font(family=family, size=size, slant="italic"),
             "bolditalic": tkfont.Font(family=family, size=size, weight="bold",
                                       slant="italic"),
+            # the reading voice
+            "read": tkfont.Font(family=serif, size=read),
+            "readbold": tkfont.Font(family=serif, size=read, weight="bold"),
+            "readitalic": tkfont.Font(family=serif, size=read, slant="italic"),
+            "readbolditalic": tkfont.Font(family=serif, size=read, weight="bold",
+                                          slant="italic"),
+            "readhead": tkfont.Font(family=serif, size=read + 3, weight="bold"),
+            "readtitle": tkfont.Font(family=serif, size=read + 8, weight="bold"),
         }
 
     def apply_fonts(self):
         f = self.fonts()
-        self.excerpt.configure(font=f["body"])
+        self.excerpt.configure(font=f["read"])
         self.entry.configure(font=f["body"])
         if self.transcript is not None:      # search only has no transcript
-            self.transcript.configure(font=f["body"])
-            for name, spec in (("you", "question"), ("answer", "body"),
+            self.transcript.configure(font=f["read"])
+            # The answer is prose from the book, so it reads in the book's face.
+            # Everything the app says about it stays in the interface face.
+            for name, spec in (("you", "question"), ("answer", "read"),
                                ("cite", "small"), ("muted", "small"), ("warn", "body"),
-                               ("label", "small"), ("rule", "small"), ("bullet", "body"),
-                               ("heading", "bold"), ("strong", "bold"),
-                               ("emph", "italic")):
+                               ("label", "small"), ("rule", "small"), ("bullet", "read"),
+                               ("heading", "readhead"), ("strong", "readbold"),
+                               ("emph", "readitalic")):
                 self.transcript.tag_configure(name, font=f[spec])
         self.excerpt.tag_configure("head", font=f["small"])
-        self.excerpt.tag_configure("subhead", font=f["bold"])
-        self.excerpt.tag_configure("strong", font=f["bold"])
-        self.excerpt.tag_configure("emph", font=f["italic"])
-        self.excerpt.tag_configure("strongemph", font=f["bolditalic"])
+        self.excerpt.tag_configure("subhead", font=f["readhead"])
+        self.excerpt.tag_configure("strong", font=f["readbold"])
+        self.excerpt.tag_configure("emph", font=f["readitalic"])
+        self.excerpt.tag_configure("strongemph", font=f["readbolditalic"])
+        self.excerpt.tag_configure("title", font=f["readtitle"])
+        self.excerpt.tag_configure("muted", font=f["body"])
         self.side_empty.configure(font=f["small"])
 
     # ---------------------------------------------------------------- widgets
@@ -422,8 +459,12 @@ class App(tk.Tk):
 
         left = ttk.Frame(self.panes)
         self.panes.add(left, weight=3)
-        self.transcript = self.build_transcript(left) if ai else None
+        # The composer is packed first so it claims its height before anything
+        # else. Pack hands out space in packing order, so a greedy widget packed
+        # ahead of it would squeeze the question box off the bottom of a short
+        # window instead of giving up its own room.
         self.build_composer(left, ai)
+        self.transcript = self.build_transcript(left) if ai else None
 
         right = ttk.Frame(self.panes)
         self.panes.add(right, weight=2)
@@ -437,19 +478,19 @@ class App(tk.Tk):
     def build_transcript(self, parent):
         wrap = ttk.Frame(parent)
         wrap.pack(fill=tk.BOTH, expand=True, padx=(2, 0), pady=(2, 0))
-        text = tk.Text(wrap, wrap="word", padx=20, pady=16, relief="flat",
-                       spacing1=2, spacing3=6, cursor="arrow",
-                       bg=self.colors["page"], fg=self.colors["ink"],
-                       insertbackground=self.colors["ink"],
-                       highlightthickness=0, state="disabled")
+        text = tk.Text(wrap, wrap="word", padx=26, pady=20, relief="flat",
+                       spacing1=3, spacing2=4, spacing3=9, cursor="arrow",
+                       bg=self.colors["paper"], fg=self.colors["paperink"],
+                       insertbackground=self.colors["paperink"],
+                       highlightthickness=0, state="disabled", height=8)
         bar = ttk.Scrollbar(wrap, command=text.yview)
         text.configure(yscrollcommand=bar.set)
         bar.pack(side=tk.RIGHT, fill=tk.Y)
         text.pack(fill=tk.BOTH, expand=True)
         text.tag_configure("label", foreground=self.colors["muted"],
                            spacing1=18, spacing3=2)
-        text.tag_configure("you", foreground=self.colors["ink"],
-                           spacing3=10, lmargin1=0, lmargin2=0)
+        text.tag_configure("you", foreground=self.colors["paperink"],
+                           spacing3=12, lmargin1=0, lmargin2=0)
         text.tag_configure("answer", spacing2=3, spacing3=10, lmargin1=0, lmargin2=0)
         text.tag_configure("heading", foreground=self.colors["accent"],
                            spacing1=8, spacing3=4)
@@ -457,7 +498,7 @@ class App(tk.Tk):
         text.tag_configure("muted", foreground=self.colors["muted"])
         text.tag_configure("warn", foreground=self.colors["warn"])
         text.tag_configure("bullet", lmargin1=20, lmargin2=36, spacing2=3, spacing3=6)
-        text.tag_configure("strong", foreground=self.colors["ink"])
+        text.tag_configure("strong", foreground=self.colors["paperink"])
         text.tag_configure("emph")
         text.tag_configure("rule", foreground=self.colors["rule"],
                            spacing1=12, spacing3=12, justify="center")
@@ -507,7 +548,7 @@ class App(tk.Tk):
         head = ttk.Label(parent, text="Sections found", padding=(8, 6))
         head.pack(fill=tk.X)
         self.tree = ttk.Treeview(parent, columns=("page",), show="tree headings",
-                                 height=8)
+                                 height=6)
         self.tree.heading("#0", text="Section")
         self.tree.heading("page", text="Page")
         self.tree.column("#0", width=240, stretch=True)
@@ -516,14 +557,45 @@ class App(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", self.on_pick)
 
     def build_excerpt(self, parent):
-        self.excerpt = tk.Text(parent, wrap="word", relief="flat", padx=12, pady=10,
-                               bg=self.colors["quote"], fg=self.colors["ink"],
-                               highlightthickness=0, state="disabled", height=10)
+        self.excerpt = tk.Text(parent, wrap="word", relief="flat", padx=32, pady=26,
+                               bg=self.colors["paper"], fg=self.colors["paperink"],
+                               highlightthickness=0, state="disabled", height=5,
+                               spacing1=3, spacing2=4, spacing3=9, cursor="arrow")
         self.excerpt.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.excerpt.tag_configure("head", foreground=self.colors["muted"], spacing3=8)
-        self.excerpt.tag_configure("subhead", foreground=self.colors["accent"], spacing3=4)
+        # Metadata reads as machinery: mono, quiet, and held well clear
+        # of the prose underneath it.
+        self.excerpt.tag_configure("head", foreground=self.colors["muted"], spacing3=18)
+        self.excerpt.tag_configure("subhead", foreground=self.colors["accent"],
+                                   spacing1=14, spacing3=6)
         self.excerpt.tag_configure("mark", background=self.colors["mark"])
         self.excerpt.tag_configure("muted", foreground=self.colors["muted"])
+        self.excerpt.tag_configure("centre", justify="center")
+        self.excerpt.bind("<Configure>", self.reflow_excerpt)
+
+    def reflow_excerpt(self, _event=None):
+        """Hold the text to a readable measure on a wide window.
+
+        A line running the full width of a maximised pane is tiring to read, so
+        the column stays near 74 characters and the leftover width becomes
+        margin on both sides.
+        """
+        try:
+            char = self.fonts()["read"].measure("n") or 8
+        except tk.TclError:
+            return
+        width = self.excerpt.winfo_width()
+        if width < 80:
+            return
+        margin = max(24, (width - 74 * char) // 2)
+        if abs(margin - int(self.excerpt.cget("padx"))) > 3:
+            self.excerpt.configure(padx=margin)
+
+        # A resting cover is sized to the pane, so it has to be redrawn when the
+        # pane changes. The threshold keeps this off the resize path until the
+        # difference would actually show.
+        if getattr(self, "showing_cover", False) and self.big_cover is not None:
+            if abs(self.cover_room() - self.big_cover.height()) > 60:
+                self.show_cover()
 
         self.apply_fonts()
         self.set_status()
@@ -562,12 +634,43 @@ class App(tk.Tk):
         if self.transcript is not None:
             self.write("Ask about a rule\n", "heading")
             self.write(INTRO, "muted")
-            return
-        # Search only has nowhere to put an intro but the reading pane.
+        self.show_cover()
+
+    def show_cover(self):
+        """The reading pane at rest: the open collection, named and pictured.
+
+        Title first, then the cover sized to what is left, and nothing after it.
+        Anything below the picture would push the page into scrolling, which
+        makes a resting state look like unfinished content.
+        """
         self.excerpt.configure(state="normal")
         self.excerpt.delete("1.0", "end")
-        self.excerpt.insert("end", SEARCH_INTRO, "muted")
+        current = self.read_collection(core.DB["path"])
+
+        self.excerpt.insert("end", "\n")
+        self.excerpt.insert("end", f"{current['label']}\n", ("centre", "title"))
+        count = len(current["books"])
+        if count > 1:
+            self.excerpt.insert("end", f"{count} books in this collection\n",
+                                ("centre", "muted"))
+
+        # Held on the instance or Tk drops the image the moment this returns.
+        self.big_cover = self.cover_image(current["cover"], self.cover_room())
+        if self.big_cover is not None:
+            self.excerpt.insert("end", "\n")
+            start = self.excerpt.index("end-1c")
+            self.excerpt.image_create("end", image=self.big_cover, pady=10)
+            # justify works by line, so the image's own line carries the tag
+            self.excerpt.tag_add("centre", start, "end")
         self.excerpt.configure(state="disabled")
+        self.showing_cover = True
+
+    def cover_room(self):
+        """Height left for the cover once the title has taken its share."""
+        height = self.excerpt.winfo_height()
+        if height < 120:                     # too early to know; pick something sane
+            return COVER_HEIGHT * 4
+        return max(COVER_HEIGHT, height - 150)
 
     def clear(self):
         self.history.clear()
@@ -1383,6 +1486,7 @@ class App(tk.Tk):
         src = self.sources.get(source_id)
         if not src:
             return
+        self.showing_cover = False
         pages = (f"p.{src['page_start']}" if src["page_start"] == src["page_end"]
                  else f"pp.{src['page_start']}–{src['page_end']}")
         self.excerpt.configure(state="normal")

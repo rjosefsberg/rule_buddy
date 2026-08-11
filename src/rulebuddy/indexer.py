@@ -32,7 +32,8 @@ except ImportError:  # older installs expose the same module as fitz
         sys.exit("PyMuPDF is missing. Run: pip install pymupdf")
 
 DEFAULT_DB = "rulebook.db"
-COVER_HEIGHT = 240      # stored tall; the sidebar subsamples it down
+COVER_HEIGHT = 480      # stored tall: big enough to fill a reading pane,
+                        # and the sidebar subsamples it down to a thumbnail
 MAX_CHUNK_WORDS = 450
 FTS_OPERATORS = re.compile(r'["*(]|\b(?:AND|OR|NOT|NEAR)\b')
 # Matches rule numbers such as 14, 14.3, 14.3.2, A.4
