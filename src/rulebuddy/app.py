@@ -31,9 +31,10 @@ except (ImportError, SystemExit):
 
 CITE = re.compile(r"\[#(\d+)[^\]]*?(\d+)\]")
 MAX_IMPORT_BYTES = 100 * 1_000_000
-SIDEBAR_WIDTH = 210
+SIDEBAR_WIDTH = 265
 RAIL_WIDTH = 26
-COVER_HEIGHT = 60       # on screen; the indexer stores covers at a multiple of it
+COVER_HEIGHT = 120      # thumbnail height on the shelf. The indexer stores
+                        # covers at a multiple of this, so they subsample cleanly.
 INTRO = ("Answers cite the section and page. Click a citation to read the excerpt "
          "it came from, so you can check the book yourself.\n\n"
          "Questions work best in the book's own words. Try \"cover ranged attack\" "
@@ -159,6 +160,7 @@ class App(tk.Tk):
             "rule": "#3A3A3A" if self.dark else "#D2D6DA",
             # The reading surface is its own material: warmer than the chrome,
             # so the book reads as paper and the app around it does not.
+            "chrome": base,
             "paper": "#22211F" if self.dark else "#FBF8F1",
             "paperink": "#E6E1D6" if self.dark else "#241F17",
         }
@@ -303,16 +305,29 @@ class App(tk.Tk):
         self.side_close.bind("<Button-1>", lambda e: self.set_sidebar(False))
         ttk.Separator(self.side, orient=tk.HORIZONTAL).pack(fill=tk.X)
 
-        self.side_body = ttk.Frame(self.side, padding=(10, 10))
+        self.side_body = ttk.Frame(self.side, padding=(8, 8))
         self.side_body.pack(fill=tk.BOTH, expand=True)
 
-        # One row per index file. show="tree" drops the header, so it reads as a
-        # list rather than a second table next to the sections pane.
-        ttk.Style(self).configure("Books.Treeview", rowheight=COVER_HEIGHT + 8)
-        self.book_list = ttk.Treeview(self.side_body, show="tree", selectmode="browse",
-                                      style="Books.Treeview")
-        self.book_list.column("#0", width=SIDEBAR_WIDTH - 20, stretch=True)
-        self.book_list.bind("<<TreeviewSelect>>", self.on_pick_book)
+        # A card per collection: cover on top, name under it. Treeview puts the
+        # two side by side on one line and gives no say in the matter, so the
+        # list is built from plain frames inside a scrolling canvas.
+        self.shelf = tk.Canvas(self.side_body, bg=self.colors["chrome"],
+                               highlightthickness=0, width=SIDEBAR_WIDTH - 30)
+        bar = ttk.Scrollbar(self.side_body, command=self.shelf.yview)
+        self.shelf.configure(yscrollcommand=bar.set)
+        bar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.shelf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.book_area = tk.Frame(self.shelf, bg=self.colors["chrome"])
+        self.shelf_window = self.shelf.create_window((0, 0), window=self.book_area,
+                                                     anchor="nw")
+        self.book_area.bind(
+            "<Configure>",
+            lambda e: self.shelf.configure(scrollregion=self.shelf.bbox("all")))
+        self.shelf.bind(
+            "<Configure>",
+            lambda e: self.shelf.itemconfigure(self.shelf_window, width=e.width))
+        self.shelf.bind("<MouseWheel>",
+                        lambda e: self.shelf.yview_scroll(-e.delta // 120, "units"))
 
         self.menu_target = None
         self.book_menu = tk.Menu(self, tearoff=0)
@@ -323,18 +338,13 @@ class App(tk.Tk):
         self.book_menu.add_separator()
         self.book_menu.add_command(label="Remove this book…", command=self.remove_from_collection)
         self.book_menu.add_command(label="Delete collection…", command=self.delete_book)
-        # Button-3 everywhere, and Button-2 as well for a one button Mac mouse.
-        self.book_list.bind("<Button-3>", self.post_book_menu)
-        if sys.platform == "darwin":
-            self.book_list.bind("<Button-2>", self.post_book_menu)
-            self.book_list.bind("<Control-Button-1>", self.post_book_menu)
+
         self.side_empty = ttk.Label(self.side_body, wraplength=SIDEBAR_WIDTH - 40,
                                     justify="left", foreground=self.colors["muted"],
                                     font=f["small"],
                                     text="No books yet.\n\nUse File → Import rulebook… "
                                          "to index a PDF, or put a .db index in the "
                                          "books folder.")
-        self.side_empty.pack(anchor="nw")
 
         self.rail = ttk.Frame(self, width=RAIL_WIDTH)
         self.rail.pack_propagate(False)
@@ -938,50 +948,97 @@ class App(tk.Tk):
             self.extra_books.append(full)
 
     def refresh_books(self):
-        """Rebuild the sidebar list and highlight whichever book is open."""
+        """Rebuild the shelf and mark whichever collection is open."""
         self.books = self.scan_books()
-        for row in self.book_list.get_children():
-            self.book_list.delete(row)
-        # Tk drops an image the moment nothing references it, so the rows would
+        for child in self.book_area.winfo_children():
+            child.destroy()
+        # Tk drops an image the moment nothing references it, so the cards would
         # come up blank without this list holding on to them.
         self.covers = []
         current = os.path.normcase(os.path.abspath(core.DB["path"]))
+
         for i, book in enumerate(self.books):
-            cover = self.cover_image(book["cover"])
-            self.covers.append(cover)
-            count = len(book["books"])
-            label = f" {book['label']}"
-            if count > 1:
-                label += f"  ({count} books)"
-            node = self.book_list.insert("", "end", iid=str(i), text=label,
-                                         image=cover or "", open=True)
-            # A collection of one is just that book; nesting it under itself
-            # would only add a disclosure triangle to click.
-            if count > 1:
-                for entry in book["books"]:
-                    thumb = self.cover_image(entry["cover"], COVER_HEIGHT // 2)
-                    self.covers.append(thumb)
-                    self.book_list.insert(node, "end", iid=f"{i}:{entry['id']}",
-                                          text=f" {entry['title']}", image=thumb or "")
-            if os.path.normcase(book["path"]) == current:
-                self.book_list.selection_set(node)
-                self.book_list.see(node)
-        # Any books at all, list them. The message is for an empty shelf.
+            open_now = os.path.normcase(book["path"]) == current
+            self.build_card(i, book, open_now)
+
         if self.books:
             self.side_empty.pack_forget()
-            self.book_list.pack(fill=tk.BOTH, expand=True)
+            self.shelf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         else:
-            self.book_list.pack_forget()
+            self.shelf.pack_forget()
             self.side_empty.pack(anchor="nw")
 
-    def post_book_menu(self, event):
-        """Right click acts on the row under the pointer without selecting it.
+    def build_card(self, i, book, open_now):
+        """One collection: its cover, then its name under it."""
+        back = self.colors["quote"] if open_now else self.colors["chrome"]
+        edge = self.colors["accent"] if open_now else self.colors["rule"]
+        f = self.fonts()
 
-        Selecting would switch books, which is not what a right click means.
+        card = tk.Frame(self.book_area, bg=edge, padx=1, pady=1)
+        card.pack(fill=tk.X, pady=(0, 8))
+        inner = tk.Frame(card, bg=back, padx=6, pady=8)
+        inner.pack(fill=tk.BOTH, expand=True)
+
+        cover = self.cover_image(book["cover"], COVER_HEIGHT)
+        self.covers.append(cover)
+        if cover is not None:
+            tk.Label(inner, image=cover, bg=back, bd=0).pack()
+        name = tk.Label(inner, text=book["label"], bg=back, fg=self.colors["ink"],
+                        font=f["bold"], wraplength=SIDEBAR_WIDTH - 60,
+                        justify="center")
+        name.pack(fill=tk.X, pady=(6, 0))
+
+        count = len(book["books"])
+        if count > 1:
+            tk.Label(inner, text=f"{count} books", bg=back,
+                     fg=self.colors["muted"], font=f["small"]).pack()
+
+        self.arm_card(inner, str(i))
+        # A collection of one is just that book, so it needs no list under it.
+        if count > 1:
+            for entry in book["books"]:
+                row = tk.Label(inner, text=entry["title"], bg=back,
+                               fg=self.colors["muted"], font=f["small"],
+                               wraplength=SIDEBAR_WIDTH - 70, justify="left",
+                               anchor="w")
+                row.pack(fill=tk.X, padx=(8, 0), pady=(4, 0))
+                self.arm_card(row, f"{i}:{entry['id']}")
+
+    def arm_card(self, widget, target):
+        """Make a card and everything drawn on it answer to the same row id.
+
+        Tk does not pass a click up from a child to its parent, so each label
+        carries the bindings itself.
         """
-        row = self.book_list.identify_row(event.y)
-        if not row:
+        widget.bind("<Button-1>", lambda e, t=target: self.pick_card(t))
+        widget.bind("<Button-3>", lambda e, t=target: self.post_book_menu(e, t))
+        if sys.platform == "darwin":
+            widget.bind("<Button-2>", lambda e, t=target: self.post_book_menu(e, t))
+            widget.bind("<Control-Button-1>", lambda e, t=target: self.post_book_menu(e, t))
+        for child in widget.winfo_children():
+            self.arm_card(child, target)
+
+    def pick_card(self, target):
+        """Open the collection a card belongs to."""
+        book, _ = self.target(target)
+        if book is None:
             return
+        if os.path.normcase(book["path"]) == os.path.normcase(os.path.abspath(core.DB["path"])):
+            return                          # already open, nothing to do
+        if self.busy:
+            self.set_status("Still answering. Try again when it finishes.")
+            return
+        try:
+            self.use_index(book["path"])
+        except SystemExit as err:
+            messagebox.showerror("Cannot open index", str(err))
+            self.refresh_books()
+
+    def post_book_menu(self, event, row):
+        """Right click acts on the card under the pointer without opening it.
+
+        Opening is what a left click means, and a right click must not do it.
+        """
         self.menu_target = row
         # "Remove this book" only means something on a book inside a collection.
         _, book_id = self.target(row)
@@ -1305,25 +1362,6 @@ class App(tk.Tk):
         else:
             self.set_status(f"Deleted {book['label']}.")
         self.refresh_books()
-
-    def on_pick_book(self, _event=None):
-        picked = self.book_list.selection()
-        if not picked:
-            return
-        book, _ = self.target(picked[0])
-        if book is None:
-            return
-        if os.path.normcase(book["path"]) == os.path.normcase(os.path.abspath(core.DB["path"])):
-            return                          # already open, nothing to do
-        if self.busy:
-            self.set_status("Still answering. Try again when it finishes.")
-            self.refresh_books()            # put the highlight back where it was
-            return
-        try:
-            self.use_index(book["path"])
-        except SystemExit as err:
-            messagebox.showerror("Cannot open index", str(err))
-            self.refresh_books()
 
     def use_index(self, path):
         """Point the window at an index file and refresh everything it feeds."""
