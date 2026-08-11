@@ -40,6 +40,60 @@ INTRO = ("Answers cite the section and page. Click a citation to read the excerp
          "rather than \"can I shoot someone hiding\".\n\n"
          "New question starts a fresh thread. Ask more keeps the current one, and "
          "answers over everything it has found so far.\n")
+SEARCH_INTRO = ("Type words from the book and press Search.\n\n"
+                "Matching sections appear on the left. Pick one to read it here.\n\n"
+                "This is searching your books on this machine. Nothing is sent "
+                "anywhere. Add an API key to get written answers that cite what "
+                "they used.\n")
+
+
+class KeyDialog(tk.Toplevel):
+    """Ask for an API key, with the choice of keeping it past this session."""
+
+    def __init__(self, parent, current=""):
+        super().__init__(parent)
+        self.transient(parent)
+        self.title("Anthropic API key")
+        self.resizable(False, False)
+        self.result = None
+
+        body = ttk.Frame(self, padding=(16, 14))
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, wraplength=430, justify="left",
+                  text="A key turns on written answers. Without one the window "
+                       "still searches your books and shows the text.").pack(anchor="w")
+        ttk.Label(body, text="Key", padding=(0, 10, 0, 2)).pack(anchor="w")
+
+        self.entry = ttk.Entry(body, width=52, show="•")
+        self.entry.pack(fill=tk.X)
+        self.entry.insert(0, current)
+
+        self.save = tk.BooleanVar(value=bool(current))
+        ttk.Checkbutton(body, variable=self.save, text="Save it in config.json for next time"
+                        ).pack(anchor="w", pady=(10, 0))
+        ttk.Label(body, wraplength=430, justify="left", foreground="#8C8C8C",
+                  text="Saved keys are stored as plain text next to the app. Leave "
+                       "this off on a shared machine.").pack(anchor="w", pady=(2, 0))
+
+        row = ttk.Frame(body)
+        row.pack(fill=tk.X, pady=(14, 0))
+        ttk.Button(row, text="Cancel", width=12, command=self.destroy).pack(side=tk.RIGHT)
+        ttk.Button(row, text="Check and use", width=14,
+                   command=self.accept).pack(side=tk.RIGHT, padx=(0, 8))
+
+        self.bind("<Return>", lambda e: self.accept())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.entry.focus_set()
+        self.grab_set()
+        self.wait_window(self)
+
+    def accept(self):
+        key = self.entry.get().strip()
+        if not key:
+            messagebox.showwarning("No key", "Paste a key, or cancel.", parent=self)
+            return
+        self.result = (key, self.save.get())
+        self.destroy()
 
 
 def luminance(widget, color):
@@ -65,6 +119,10 @@ class App(tk.Tk):
         self.terms = []
         self.inbox = queue.Queue()
         self.busy = False
+        self.transcript = None
+        # Written answers follow the key: present means on, and the Mode menu
+        # can turn them off again without throwing the key away.
+        self.want_ai = tk.BooleanVar(value=core.has_key())
 
         self.title(self.book_name())
         self.geometry("1260x800")
@@ -115,14 +173,16 @@ class App(tk.Tk):
 
     def apply_fonts(self):
         f = self.fonts()
-        self.transcript.configure(font=f["body"])
         self.excerpt.configure(font=f["body"])
         self.entry.configure(font=f["body"])
-        for name, spec in (("you", "question"), ("answer", "body"),
-                           ("cite", "small"), ("muted", "small"), ("warn", "body"),
-                           ("label", "small"), ("rule", "small"), ("bullet", "body"),
-                           ("heading", "bold"), ("strong", "bold"), ("emph", "italic")):
-            self.transcript.tag_configure(name, font=f[spec])
+        if self.transcript is not None:      # search only has no transcript
+            self.transcript.configure(font=f["body"])
+            for name, spec in (("you", "question"), ("answer", "body"),
+                               ("cite", "small"), ("muted", "small"), ("warn", "body"),
+                               ("label", "small"), ("rule", "small"), ("bullet", "body"),
+                               ("heading", "bold"), ("strong", "bold"),
+                               ("emph", "italic")):
+                self.transcript.tag_configure(name, font=f[spec])
         self.excerpt.tag_configure("head", font=f["small"])
         self.excerpt.tag_configure("subhead", font=f["bold"])
         self.excerpt.tag_configure("strong", font=f["bold"])
@@ -142,6 +202,9 @@ class App(tk.Tk):
                            command=self.import_rulebook)
         m_file.add_command(label="Open index…", accelerator=f"{key}+O", command=self.open_index)
         m_file.add_separator()
+        m_file.add_command(label="Set API key…", command=self.ask_for_key)
+        m_file.add_command(label="Remove API key…", command=self.forget_key)
+        m_file.add_separator()
         m_file.add_command(label="Clear conversation", accelerator=f"{key}+K", command=self.clear)
         menu.add_cascade(label="File", menu=m_file)
 
@@ -150,6 +213,11 @@ class App(tk.Tk):
                            command=lambda: self.focus_get().event_generate("<<Copy>>"))
         m_edit.add_command(label="Copy last answer", command=self.copy_answer)
         menu.add_cascade(label="Edit", menu=m_edit)
+
+        m_mode = tk.Menu(menu, tearoff=0)
+        m_mode.add_checkbutton(label="Written answers (AI)", variable=self.want_ai,
+                               command=self.toggle_ai)
+        menu.add_cascade(label="Mode", menu=m_mode)
 
         m_view = tk.Menu(menu, tearoff=0)
         self.show_books = tk.BooleanVar(value=True)
@@ -245,6 +313,81 @@ class App(tk.Tk):
     def toggle_sidebar(self):
         self.set_sidebar(self.show_books.get())
 
+    def ai_mode(self):
+        """Written answers are on only when there is a key and you want them."""
+        return core.has_key() and self.want_ai.get()
+
+    def switch_mode(self):
+        """Rebuild the window for the current mode, keeping what still applies.
+
+        Tearing the panes down and building them again beats juggling two
+        arrangements of the same widgets, which is where this sort of thing rots.
+        """
+        typed = self.entry.get("1.0", "end").strip()
+        self.panes.destroy()
+        self.build_panes()
+        self.apply_fonts()
+        self.history.clear()      # a conversation means nothing in search only
+        self.sources.clear()
+        self.show_intro()
+        if typed:
+            self.entry.insert("1.0", typed)
+        self.set_status()
+        self.entry.focus_set()
+
+    def toggle_ai(self):
+        """The Mode menu. Turning it on without a key asks for one."""
+        if self.want_ai.get() and not core.has_key():
+            self.ask_for_key()
+            self.want_ai.set(core.has_key())
+            return
+        self.switch_mode()
+
+    def ask_for_key(self):
+        """Take a key, check it against the API, and switch modes if it works."""
+        dialog = KeyDialog(self, current=core.CONFIG["key"])
+        if not dialog.result:
+            return
+        key, persist = dialog.result
+        if not core.looks_like_key(key):
+            if not messagebox.askyesno(
+                    "That does not look like a key",
+                    "Anthropic keys start with sk-ant- and are long.\n\n"
+                    "Try it anyway?"):
+                return
+
+        self.set_status("Checking the key…")
+        self.update_idletasks()
+        ok, detail = core.verify_key(key)
+        if not ok:
+            self.set_status()
+            messagebox.showerror("That key did not work", detail)
+            return
+
+        saved, where = core.set_key(key, persist=persist)
+        if persist and not saved:
+            messagebox.showwarning(
+                "Key not saved",
+                f"{where}\n\nIt is in use for this session, but you will have to "
+                "enter it again next time.")
+        self.want_ai.set(True)
+        self.switch_mode()
+        self.set_status("Key accepted. Written answers are on.")
+
+    def forget_key(self):
+        """Drop the key and fall back to search only."""
+        if not core.has_key():
+            return
+        forget = messagebox.askyesno(
+            "Remove the key?",
+            "Stop using the key and go back to searching only?\n\n"
+            "Yes also deletes it from config.json. No keeps the file as it is "
+            "and only forgets it for this session.")
+        core.clear_key(forget=forget)
+        self.want_ai.set(False)
+        self.switch_mode()
+        self.set_status("Search only. No key in use.")
+
     def build_layout(self):
         self.status = ttk.Label(self, anchor="w", padding=(10, 3))
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -254,50 +397,71 @@ class App(tk.Tk):
         self.divider = ttk.Separator(self, orient=tk.VERTICAL)
         self.build_sidebar()
         self.divider.pack(side=tk.LEFT, fill=tk.Y)
+        self.build_panes()
 
+    def build_panes(self):
+        """The two arrangements. Which one depends on the mode.
+
+        AI mode reads as a conversation: transcript on the left, sections and
+        their text stacked on the right. Search only has no conversation, so the
+        results take the middle and the text takes the whole right side.
+        """
         self.panes = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self.panes.pack(fill=tk.BOTH, expand=True)
+        ai = self.ai_mode()
 
         left = ttk.Frame(self.panes)
         self.panes.add(left, weight=3)
+        self.transcript = self.build_transcript(left) if ai else None
+        self.build_composer(left, ai)
 
-        wrap = ttk.Frame(left)
+        right = ttk.Frame(self.panes)
+        self.panes.add(right, weight=2)
+        self.right = right
+
+        # Search only puts the results next to the question that produced them;
+        # AI mode keeps them beside the answer that cites them.
+        self.build_results(left if not ai else right, fill=not ai)
+        self.build_excerpt(right)
+
+    def build_transcript(self, parent):
+        wrap = ttk.Frame(parent)
         wrap.pack(fill=tk.BOTH, expand=True, padx=(2, 0), pady=(2, 0))
-        self.transcript = tk.Text(wrap, wrap="word", padx=20, pady=16, relief="flat",
-                                  spacing1=2, spacing3=6, cursor="arrow",
-                                  bg=self.colors["page"], fg=self.colors["ink"],
-                                  insertbackground=self.colors["ink"],
-                                  highlightthickness=0, state="disabled")
-        bar = ttk.Scrollbar(wrap, command=self.transcript.yview)
-        self.transcript.configure(yscrollcommand=bar.set)
+        text = tk.Text(wrap, wrap="word", padx=20, pady=16, relief="flat",
+                       spacing1=2, spacing3=6, cursor="arrow",
+                       bg=self.colors["page"], fg=self.colors["ink"],
+                       insertbackground=self.colors["ink"],
+                       highlightthickness=0, state="disabled")
+        bar = ttk.Scrollbar(wrap, command=text.yview)
+        text.configure(yscrollcommand=bar.set)
         bar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.transcript.pack(fill=tk.BOTH, expand=True)
-        self.transcript.tag_configure("label", foreground=self.colors["muted"],
-                                      spacing1=18, spacing3=2)
-        self.transcript.tag_configure("you", foreground=self.colors["ink"],
-                                      spacing3=10, lmargin1=0, lmargin2=0)
-        self.transcript.tag_configure("answer", spacing2=3, spacing3=10,
-                                      lmargin1=0, lmargin2=0)
-        self.transcript.tag_configure("heading", foreground=self.colors["accent"],
-                                      spacing1=8, spacing3=4)
-        self.transcript.tag_configure("cite", foreground=self.colors["accent"])
-        self.transcript.tag_configure("muted", foreground=self.colors["muted"])
-        self.transcript.tag_configure("warn", foreground=self.colors["warn"])
-        self.transcript.tag_configure("bullet", lmargin1=20, lmargin2=36,
-                                      spacing2=3, spacing3=6)
-        self.transcript.tag_configure("strong", foreground=self.colors["ink"])
-        self.transcript.tag_configure("emph")
-        self.transcript.tag_configure("rule", foreground=self.colors["rule"],
-                                      spacing1=12, spacing3=12, justify="center")
+        text.pack(fill=tk.BOTH, expand=True)
+        text.tag_configure("label", foreground=self.colors["muted"],
+                           spacing1=18, spacing3=2)
+        text.tag_configure("you", foreground=self.colors["ink"],
+                           spacing3=10, lmargin1=0, lmargin2=0)
+        text.tag_configure("answer", spacing2=3, spacing3=10, lmargin1=0, lmargin2=0)
+        text.tag_configure("heading", foreground=self.colors["accent"],
+                           spacing1=8, spacing3=4)
+        text.tag_configure("cite", foreground=self.colors["accent"])
+        text.tag_configure("muted", foreground=self.colors["muted"])
+        text.tag_configure("warn", foreground=self.colors["warn"])
+        text.tag_configure("bullet", lmargin1=20, lmargin2=36, spacing2=3, spacing3=6)
+        text.tag_configure("strong", foreground=self.colors["ink"])
+        text.tag_configure("emph")
+        text.tag_configure("rule", foreground=self.colors["rule"],
+                           spacing1=12, spacing3=12, justify="center")
+        return text
 
-        composer = ttk.Frame(left, padding=(10, 6, 10, 10))
-        composer.pack(fill=tk.X)
+    def build_composer(self, parent, ai):
+        composer = ttk.Frame(parent, padding=(10, 6, 10, 10))
+        composer.pack(fill=tk.X, side=tk.TOP if not ai else tk.BOTTOM)
 
         # The box carries the border so it reads as one field, not a sunken widget.
         field = tk.Frame(composer, bg=self.colors["rule"], padx=1, pady=1)
         field.pack(fill=tk.X)
-        self.entry = tk.Text(field, height=3, wrap="word", relief="flat", bd=0,
-                             padx=10, pady=8, bg=self.colors["page"],
+        self.entry = tk.Text(field, height=3 if ai else 1, wrap="word", relief="flat",
+                             bd=0, padx=10, pady=8, bg=self.colors["page"],
                              fg=self.colors["ink"], insertbackground=self.colors["ink"],
                              highlightthickness=0)
         self.entry.pack(fill=tk.BOTH, expand=True)
@@ -308,37 +472,48 @@ class App(tk.Tk):
 
         row = ttk.Frame(composer)
         row.pack(fill=tk.X, pady=(8, 0))
-        # Both buttons keep the stock style and one width, so the theme gives
-        # them identical padding and their labels share a baseline.
-        self.more = ttk.Button(row, text="Ask more", width=14,
-                               command=lambda: self.submit(follow=True))
-        self.more.pack(side=tk.RIGHT)
-        self.send = ttk.Button(row, text="New question", width=14,
-                               command=lambda: self.submit(follow=False))
-        self.send.pack(side=tk.RIGHT, padx=(0, 8))
-        self.hint = ttk.Label(row, text="Enter asks  ·  Shift+Enter adds a line",
-                              foreground=self.colors["muted"], anchor="w")
+        if ai:
+            # Both buttons keep the stock style and one width, so the theme gives
+            # them identical padding and their labels share a baseline.
+            self.more = ttk.Button(row, text="Ask more", width=14,
+                                   command=lambda: self.submit(follow=True))
+            self.more.pack(side=tk.RIGHT)
+            self.send = ttk.Button(row, text="New question", width=14,
+                                   command=lambda: self.submit(follow=False))
+            self.send.pack(side=tk.RIGHT, padx=(0, 8))
+            hint = "Enter asks  ·  Shift+Enter adds a line"
+        else:
+            self.more = ttk.Button(row, text="Add a key…", width=14,
+                                   command=self.ask_for_key)
+            self.more.pack(side=tk.RIGHT)
+            self.send = ttk.Button(row, text="Search", width=14,
+                                   command=lambda: self.submit(follow=False))
+            self.send.pack(side=tk.RIGHT, padx=(0, 8))
+            hint = "Searching your books  ·  a key adds written answers"
+        self.hint = ttk.Label(row, text=hint, foreground=self.colors["muted"], anchor="w")
         self.hint.pack(side=tk.LEFT, fill=tk.Y)
 
-        right = ttk.Frame(self.panes)
-        self.panes.add(right, weight=2)
-        self.right = right
-        head = ttk.Label(right, text="Sections found", padding=(8, 6))
+    def build_results(self, parent, fill):
+        head = ttk.Label(parent, text="Sections found", padding=(8, 6))
         head.pack(fill=tk.X)
-        self.tree = ttk.Treeview(right, columns=("page",), show="tree headings", height=8)
+        self.tree = ttk.Treeview(parent, columns=("page",), show="tree headings",
+                                 height=8)
         self.tree.heading("#0", text="Section")
         self.tree.heading("page", text="Page")
         self.tree.column("#0", width=240, stretch=True)
         self.tree.column("page", width=64, stretch=False, anchor="e")
-        self.tree.pack(fill=tk.BOTH, expand=False, padx=6)
+        self.tree.pack(fill=tk.BOTH, expand=fill, padx=6)
         self.tree.bind("<<TreeviewSelect>>", self.on_pick)
-        self.excerpt = tk.Text(right, wrap="word", relief="flat", padx=12, pady=10,
+
+    def build_excerpt(self, parent):
+        self.excerpt = tk.Text(parent, wrap="word", relief="flat", padx=12, pady=10,
                                bg=self.colors["quote"], fg=self.colors["ink"],
                                highlightthickness=0, state="disabled", height=10)
         self.excerpt.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self.excerpt.tag_configure("head", foreground=self.colors["muted"], spacing3=8)
         self.excerpt.tag_configure("subhead", foreground=self.colors["accent"], spacing3=4)
         self.excerpt.tag_configure("mark", background=self.colors["mark"])
+        self.excerpt.tag_configure("muted", foreground=self.colors["muted"])
 
         self.apply_fonts()
         self.set_status()
@@ -359,27 +534,37 @@ class App(tk.Tk):
         if message is None:
             books = self.db.execute("SELECT COUNT(*) c, SUM(pages) p FROM books").fetchone()
             count = self.db.execute("SELECT COUNT(*) c FROM sections WHERE part=0").fetchone()
-            model = core.CONFIG["model"] if core.CONFIG["key"] else "search only, no API key"
+            model = core.CONFIG["model"] if self.ai_mode() else "search only"
             shelf = f"{books['c']} books · " if books and books["c"] > 1 else ""
             message = (f"{shelf}{books['p'] or '?'} pages · {count['c']} sections"
                        f" · {model}")
         self.status.configure(text=message)
 
     def write(self, text, *tags):
+        if self.transcript is None:
+            return
         self.transcript.configure(state="normal")
         self.transcript.insert("end", text, tags)
         self.transcript.configure(state="disabled")
         self.transcript.see("end")
 
     def show_intro(self):
-        self.write("Ask about a rule\n", "heading")
-        self.write(INTRO, "muted")
+        if self.transcript is not None:
+            self.write("Ask about a rule\n", "heading")
+            self.write(INTRO, "muted")
+            return
+        # Search only has nowhere to put an intro but the reading pane.
+        self.excerpt.configure(state="normal")
+        self.excerpt.delete("1.0", "end")
+        self.excerpt.insert("end", SEARCH_INTRO, "muted")
+        self.excerpt.configure(state="disabled")
 
     def clear(self):
         self.history.clear()
-        self.transcript.configure(state="normal")
-        self.transcript.delete("1.0", "end")
-        self.transcript.configure(state="disabled")
+        if self.transcript is not None:
+            self.transcript.configure(state="normal")
+            self.transcript.delete("1.0", "end")
+            self.transcript.configure(state="disabled")
         for row in self.tree.get_children():
             self.tree.delete(row)
         self.sources.clear()
@@ -1073,12 +1258,38 @@ class App(tk.Tk):
         self.submit(follow=bool(self.history))  # Enter continues an open thread
         return "break"
 
+    def search_only(self, terms):
+        """Look the words up and show what matched. No API call, no thread.
+
+        Retrieval is a local FTS query, quick enough that going off the main
+        thread would only add a flicker.
+        """
+        self.set_status("Searching…")
+        try:
+            found = core.retrieve(self.db, terms)
+        except Exception as err:
+            self.set_status(f"Search failed: {err}")
+            return
+        self.fill_sources(found, core.query_terms(terms) or "")
+        if found:
+            self.set_status(f"{len(found)} sections for “{terms}”.")
+        else:
+            self.excerpt.configure(state="normal")
+            self.excerpt.delete("1.0", "end")
+            self.excerpt.insert("end", f"Nothing matched “{terms}”.\n\n"
+                                "Try the book's own words, or fewer of them.\n", "muted")
+            self.excerpt.configure(state="disabled")
+            self.set_status("No sections matched.")
+
     def submit(self, follow=False):
         """Ask a question. A new one clears the window; a follow-up keeps it."""
         question = self.entry.get("1.0", "end").strip()
         if not question or self.busy:
             return
         self.entry.delete("1.0", "end")
+        if not self.ai_mode():
+            self.search_only(question)
+            return
         if not follow:
             self.clear()
         self.busy = True

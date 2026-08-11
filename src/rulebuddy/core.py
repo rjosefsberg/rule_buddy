@@ -84,6 +84,89 @@ def load_config(path=None):
     return data
 
 
+# ---------------------------------------------------------------- the key
+
+def has_key():
+    return bool(CONFIG["key"])
+
+
+def looks_like_key(key):
+    """Catch an obvious paste error before spending a request on it."""
+    key = (key or "").strip()
+    return key.startswith("sk-ant-") and len(key) > 30
+
+
+def verify_key(key):
+    """Ask the API whether this key works. Returns (ok, message).
+
+    The smallest call the endpoint accepts, so a typo costs a round trip rather
+    than a real request.
+    """
+    body = json.dumps({"model": CONFIG["model"], "max_tokens": 1,
+                       "messages": [{"role": "user", "content": "hi"}]}).encode()
+    request = urllib.request.Request(API_URL, data=body, headers={
+        "content-type": "application/json",
+        "x-api-key": key.strip(),
+        "anthropic-version": API_VERSION})
+    try:
+        with urllib.request.urlopen(request, timeout=30):
+            return True, "The key works."
+    except urllib.error.HTTPError as err:
+        if err.code in (401, 403):
+            return False, "The API rejected that key."
+        detail = err.read().decode("utf-8", "replace")[:200]
+        if err.code == 429:
+            return False, f"The key is rate limited right now. {detail}"
+        return False, f"The API returned {err.code}. {detail}"
+    except Exception as err:
+        return False, f"Could not reach the API: {err}"
+
+
+def save_setting(key, value, path=None):
+    """Write one setting into config.json, leaving the rest of it alone.
+
+    Returns (ok, message). The packaged app may sit on read-only media, so a
+    refusal here is ordinary and the caller is expected to carry on.
+    """
+    path = path or DEFAULT_CONFIG
+    data = {}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+    if value is None:
+        data.pop(key, None)
+    else:
+        data[key] = value
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+            handle.write("\n")
+    except OSError as err:
+        return False, f"Could not write {path}: {err}"
+    return True, path
+
+
+def set_key(key, persist=False):
+    """Use this key from now on, optionally writing it to config.json."""
+    CONFIG["key"] = (key or "").strip()
+    if persist:
+        return save_setting("api_key", CONFIG["key"])
+    return True, "Kept for this session only."
+
+
+def clear_key(forget=True):
+    """Stop using the key, and take it out of config.json unless told not to."""
+    CONFIG["key"] = ""
+    if forget:
+        return save_setting("api_key", None)
+    return True, ""
+
+
 # ------------------------------------------------------------------- schema
 
 SCHEMA_VERSION = 2

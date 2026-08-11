@@ -20,8 +20,23 @@ number, are packed into a prompt and sent to the Claude API. Retrieval is local 
 free. Only the excerpts and your question leave your machine, and only when you ask
 for a written answer.
 
-Without an API key the app still works as a search tool — you get the matching
-sections and their text, just no prose answer.
+## Two modes
+
+**Search only** is the default and needs no key. It is a local full-text search
+over your books: results on the left, the passage itself filling the right. No
+network call is reachable from this path — nothing leaves the machine.
+
+**Written answers** turn on when a key is present, either in `config.json`, in
+`ANTHROPIC_API_KEY`, or typed into `File → Set API key…`. The window becomes a
+conversation: transcript on the left, sections and their text on the right,
+citations you can click.
+
+A key is checked against the API before it is accepted, so a typo fails at the
+dialog rather than at your first question. The dialog offers to save it to
+`config.json`; leave that off on a shared machine and it lasts only for the
+session. `Mode → Written answers (AI)` turns answers off again without
+discarding the key, and `File → Remove API key…` drops it, optionally deleting
+it from the file.
 
 ## Requirements
 
