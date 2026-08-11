@@ -129,19 +129,26 @@ Every subcommand takes `--db` to pick which index it works on.
 
 ## Packaging a standalone build
 
-To hand the app to someone who does not have Python, PyInstaller produces a folder
-they can double-click:
+To hand the app to someone who does not have Python:
 
 ```sh
 pip install pyinstaller
-python -m PyInstaller --noconfirm --clean --windowed \
-  --name "Rule Buddy" --icon src/rulebuddy/assets/rulebuddy.ico --paths src \
-  --collect-all pymupdf \
-  --distpath build_out/dist --workpath build_out/work --specpath build_out \
-  run.py
+python build.py
 ```
 
-Then copy `config.json` and a `books/` folder next to the built `Rule Buddy.exe`.
+That produces `RuleBuddy-Drive/`, ready to copy onto a jump drive: a READ ME and
+a `Rule Buddy` folder holding the exe, its `_internal` directory, `config.json`
+and `books/`. All four have to travel together — the exe alone will not start.
+
+```sh
+python build.py --strip-key                  leave the API key out
+python build.py --books exalted.db           ship only these collections
+python build.py --skip-exe                   reassemble without rebuilding
+```
+
+The script points the shipped `config.json` at a book that actually made it onto
+the drive, so the exe cannot start by complaining about a missing file, and it
+says out loud when the key is travelling in plain text.
 
 The build goes through `run.py`, not `rulebuddy/__main__.py`: a frozen entry
 script runs as a top-level module with no package context, so the relative
@@ -151,19 +158,18 @@ calls `main()` by absolute import. `core.app_dir()` is what lets both forms find
 not — and startup failures surface in a dialog rather than on a console that is
 not there.
 
-The result is a folder, not a single file — the exe needs the `_internal` directory
-beside it. Ship the whole folder together.
-
 **If the build embeds a real key, treat the folder as a secret.** `config.json`
-travels in plaintext and anyone holding it can spend against your account. Rotate
-the key when the loan ends.
+travels in plain text and anyone holding it can spend against your account.
+Rotate the key when the loan ends.
 
 ## Layout
 
 ```
 rule_buddy/
   config.example.json      settings template
+  build.py                 makes the jump-drive folder
   run.py                   entry point PyInstaller builds from
+  READ ME FIRST.txt        ships with the drive folder
   books/                   the .db indexes, one per system
   src/rulebuddy/
     __main__.py            python -m rulebuddy
