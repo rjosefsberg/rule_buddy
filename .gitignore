@@ -27,6 +27,7 @@ venv/
 *.egg-info/
 
 # Editors and OS
+.claude/
 .idea/
 .vscode/
 Thumbs.db
