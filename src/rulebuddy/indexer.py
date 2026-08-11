@@ -13,12 +13,15 @@ Requires: pip install pymupdf
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
 import sqlite3
 import sys
 import textwrap
+
+from . import core
 
 try:
     import pymupdf
@@ -474,22 +477,86 @@ def render_cover(doc, height=COVER_HEIGHT):
     return pixmap.tobytes("png")
 
 
-def store_cover(db, doc):
-    """Keep the cover inside the index, so one book stays one portable file."""
-    db.execute("CREATE TABLE IF NOT EXISTS cover ("
-               "id INTEGER PRIMARY KEY CHECK (id = 1), png BLOB)")
+def store_cover(db, doc, book_id=None):
+    """Keep a book's cover inside the collection, so the file stays portable."""
+    core.ensure_schema(db)
+    if book_id is None:
+        row = db.execute("SELECT id FROM books ORDER BY id LIMIT 1").fetchone()
+        if not row:
+            print("No books in this collection to give a cover to.")
+            return
+        book_id = row[0]
     try:
         png = render_cover(doc)
     except Exception as err:              # a broken first page must not lose the index
         print(f"Could not render the cover: {err}")
         return
     if png:
-        db.execute("INSERT OR REPLACE INTO cover (id, png) VALUES (1, ?)", (png,))
+        db.execute("UPDATE books SET cover=? WHERE id=?", (png, book_id))
+
+
+BASE_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS sections (
+        id INTEGER PRIMARY KEY,
+        path TEXT, title TEXT, number TEXT, level INTEGER,
+        page_start INTEGER, page_end INTEGER, part INTEGER, text TEXT,
+        styles TEXT, book_id INTEGER
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
+        title, path, text, content='sections', content_rowid='id',
+        tokenize='porter unicode61'
+    );
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+    CREATE INDEX IF NOT EXISTS sections_pages ON sections(page_start, page_end);
+"""
+
+
+def remove_book(db, book_id, commit=True):
+    """Drop one book and everything it contributed, leaving the rest alone."""
+    db.execute("DELETE FROM sections_fts WHERE rowid IN"
+               " (SELECT id FROM sections WHERE book_id=?)", (book_id,))
+    db.execute("DELETE FROM sections WHERE book_id=?", (book_id,))
+    db.execute("DELETE FROM books WHERE id=?", (book_id,))
+    if commit:
+        db.commit()
+
+
+def rebuild_collection(db_path, plan, name=None, progress=None):
+    """Build a collection from scratch: every book, in the order given.
+
+    `plan` is a list of (pdf_path, title). The file is created fresh, so callers
+    that care about the old one should build somewhere else and swap.
+    """
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    for i, (pdf, title) in enumerate(plan, start=1):
+        def report(stage, done, total, i=i, pdf=pdf):
+            label = f"{stage} — book {i} of {len(plan)}, {os.path.basename(pdf)}"
+            if progress:
+                progress(label, done, total)
+        add_book(pdf, db_path, progress=report, title=title)
+    if name:
+        db = sqlite3.connect(db_path)
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('name',?)", (name,))
+        db.commit()
+        db.close()
+    return len(plan)
 
 
 def build(pdf_path, db_path, keep_heads=False, skip=(), progress=None):
+    """Start a collection over: one file, one book, nothing kept."""
     if os.path.exists(db_path):
         os.remove(db_path)
+    return add_book(pdf_path, db_path, keep_heads=keep_heads, skip=skip,
+                    progress=progress)
+
+
+def add_book(pdf_path, db_path, keep_heads=False, skip=(), progress=None, title=None):
+    """Add one PDF to a collection, creating the file if it is not there yet.
+
+    Sections keep growing from the same id sequence, so a citation like #412
+    still points at exactly one passage no matter how many books are in here.
+    """
     if progress:
         progress("Reading the outline", 0, 0)
     doc = pymupdf.open(pdf_path)
@@ -498,26 +565,22 @@ def build(pdf_path, db_path, keep_heads=False, skip=(), progress=None):
 
     matched = mark_skipped(entries, skip)
     for pattern in skip:
-        if not any(pattern.strip().lower() in title.lower() for title in matched):
+        if not any(pattern.strip().lower() in title_.lower() for title_ in matched):
             print(f"Nothing in the outline matches {pattern!r}.")
-    for title in matched:
-        print(f"Skipping {title}")
+    for title_ in matched:
+        print(f"Skipping {title_}")
 
     db = sqlite3.connect(db_path)
-    db.executescript("""
-        CREATE TABLE sections (
-            id INTEGER PRIMARY KEY,
-            path TEXT, title TEXT, number TEXT, level INTEGER,
-            page_start INTEGER, page_end INTEGER, part INTEGER, text TEXT,
-            styles TEXT
-        );
-        CREATE VIRTUAL TABLE sections_fts USING fts5(
-            title, path, text, content='sections', content_rowid='id',
-            tokenize='porter unicode61'
-        );
-        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
-        CREATE INDEX sections_pages ON sections(page_start, page_end);
-    """)
+    db.executescript(BASE_SCHEMA)
+    core.ensure_schema(db)
+
+    source = os.path.abspath(pdf_path)
+    existing = db.execute("SELECT id, title FROM books WHERE source=?",
+                          (source,)).fetchone()
+    # Replacing a book already in here keeps the name it was given, unless the
+    # caller asked for a different one. The old rows go once the new ones are
+    # written, so a failure partway leaves the collection as it was.
+    name = title or (existing[1] if existing else None) or core.title_from_path(pdf_path)
 
     cache = extract_pages(doc, drop_running_heads=not keep_heads, progress=progress)
     stack, rows = [], []
@@ -548,22 +611,52 @@ def build(pdf_path, db_path, keep_heads=False, skip=(), progress=None):
 
     if progress:
         progress("Writing the index", len(entries), len(entries))
+    first = db.execute("SELECT COUNT(*) FROM books").fetchone()[0] == 0
+    try:
+        cover = render_cover(doc)
+    except Exception as err:              # a bad first page must not lose the book
+        print(f"Could not render the cover: {err}")
+        cover = None
+    book_id = db.execute(
+        "INSERT INTO books (title, source, pages, added, cover) VALUES (?,?,?,?,?)",
+        (name, source, doc.page_count,
+         datetime.datetime.now().isoformat(timespec="seconds"), cover)).lastrowid
+
     db.executemany(
-        "INSERT INTO sections (path,title,number,level,page_start,page_end,part,text,styles)"
-        " VALUES (?,?,?,?,?,?,?,?,?)", rows)
+        "INSERT INTO sections (path,title,number,level,page_start,page_end,part,"
+        "text,styles,book_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [row + (book_id,) for row in rows])
+    # Only the rows just written. Re-inserting the whole table would duplicate
+    # every section already in the collection.
     db.execute("INSERT INTO sections_fts (rowid,title,path,text)"
-               " SELECT id,title,path,text FROM sections")
-    db.execute("INSERT INTO meta VALUES ('source',?)", (os.path.abspath(pdf_path),))
-    db.execute("INSERT INTO meta VALUES ('pages',?)", (str(doc.page_count),))
-    store_cover(db, doc)
+               " SELECT id,title,path,text FROM sections WHERE book_id=?", (book_id,))
+    if existing:
+        remove_book(db, existing[0], commit=False)
+    if first:
+        # Kept so an older build can still read the file it started with.
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('source',?)", (source,))
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('pages',?)",
+                   (str(doc.page_count),))
+    else:
+        # The file stops being one book the moment a second arrives, so give it
+        # a name of its own rather than leaving it wearing the first book's.
+        named = db.execute("SELECT value FROM meta WHERE key='name'").fetchone()
+        if not (named and named[0]):
+            oldest = db.execute("SELECT title FROM books ORDER BY id LIMIT 1").fetchone()
+            if oldest and oldest[0]:
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('name',?)",
+                           (f"{oldest[0]} Collection",))
     if matched:
-        db.execute("INSERT INTO meta VALUES ('skipped',?)", ("; ".join(matched),))
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('skipped',?)",
+                   ("; ".join(matched),))
     db.commit()
+    total = db.execute("SELECT COUNT(*) FROM books").fetchone()[0]
     db.close()          # callers may want to move or replace the file straight after
     pages = doc.page_count
     doc.close()
     print(f"Indexed {len(entries)} sections into {len(rows)} chunks from "
-          f"{pages} pages -> {db_path}")
+          f"{pages} pages -> {db_path} ({name}; {total} book(s) in the collection)")
+    return book_id
 
 
 # -------------------------------------------------------------------- queries
@@ -610,6 +703,33 @@ def render(text, indent="    "):
         else:
             out.append(wrap(line, indent))
     return "\n\n".join(out)
+
+
+def cmd_books(args):
+    """What is in this collection."""
+    db = connect(args.db)
+    core.ensure_schema(db)
+    rows = db.execute("SELECT b.id, b.title, b.pages, b.source,"
+                      " (SELECT COUNT(*) FROM sections s WHERE s.book_id=b.id) AS chunks"
+                      " FROM books b ORDER BY b.id").fetchall()
+    if not rows:
+        print("No books in this collection.")
+        return
+    print(f"{core.collection_name(db)}  ({len(rows)} book(s))")
+    for row in rows:
+        missing = "" if os.path.exists(row["source"] or "") else "   [PDF not found]"
+        print(f"  {row['id']:>3}  {row['title']}"
+              f"  —  {row['pages']} pages, {row['chunks']} chunks{missing}")
+
+
+def cmd_drop(args):
+    db = connect(args.db)
+    core.ensure_schema(db)
+    row = db.execute("SELECT title FROM books WHERE id=?", (args.book_id,)).fetchone()
+    if not row:
+        sys.exit(f"No book with id {args.book_id}. Try: books")
+    remove_book(db, args.book_id)
+    print(f"Removed {row['title']} from {os.path.basename(args.db)}")
 
 
 def cmd_cover(args):
@@ -763,6 +883,23 @@ def main():
     p = sub.add_parser("cover", help="add or replace the cover of an existing index")
     p.add_argument("pdf")
     p.set_defaults(func=cmd_cover)
+
+    p = sub.add_parser("add", help="add another book to an existing collection")
+    p.add_argument("pdf")
+    p.add_argument("--title", default=None, help="name for the book (default: the filename)")
+    p.add_argument("--keep-running-heads", action="store_true",
+                   help="keep repeated page headers in the text")
+    p.add_argument("--skip", nargs="+", default=[], metavar="TITLE",
+                   help="outline entries to leave out")
+    p.set_defaults(func=lambda a: add_book(a.pdf, a.db, a.keep_running_heads,
+                                           a.skip, title=a.title))
+
+    p = sub.add_parser("books", help="list the books in a collection")
+    p.set_defaults(func=cmd_books)
+
+    p = sub.add_parser("drop", help="remove one book from a collection")
+    p.add_argument("book_id", type=int)
+    p.set_defaults(func=cmd_drop)
 
     args = parser.parse_args()
     args.func(args)

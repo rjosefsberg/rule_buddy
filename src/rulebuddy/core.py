@@ -84,6 +84,76 @@ def load_config(path=None):
     return data
 
 
+# ------------------------------------------------------------------- schema
+
+SCHEMA_VERSION = 2
+
+
+def ensure_schema(db):
+    """Bring an index up to the current shape, in place.
+
+    Version 1 held one book per file: the source PDF lived in meta, and there
+    was a single cover. Version 2 makes the file a collection, with a books
+    table and every section owned by one of them. A version 1 index is migrated
+    by reading its meta into a single book row, which is what it always was.
+    """
+    have = {row[0] for row in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    db.execute("""CREATE TABLE IF NOT EXISTS books (
+        id INTEGER PRIMARY KEY,
+        title TEXT, source TEXT, pages INTEGER, added TEXT, cover BLOB)""")
+    if "meta" not in have:
+        db.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+
+    columns = {row[1] for row in db.execute("PRAGMA table_info(sections)")}
+    if columns and "book_id" not in columns:
+        db.execute("ALTER TABLE sections ADD COLUMN book_id INTEGER")
+
+    empty = db.execute("SELECT COUNT(*) FROM books").fetchone()[0] == 0
+    orphans = 0
+    if columns:
+        orphans = db.execute("SELECT COUNT(*) FROM sections").fetchone()[0]
+    # Only a version 1 index needs the migration: sections already written, but
+    # nothing owning them. A file just created is empty, not old.
+    if empty and orphans:
+        source = db.execute("SELECT value FROM meta WHERE key='source'").fetchone()
+        pages = db.execute("SELECT value FROM meta WHERE key='pages'").fetchone()
+        cover = None
+        if "cover" in have:
+            row = db.execute("SELECT png FROM cover WHERE id=1").fetchone()
+            cover = row[0] if row else None
+        path = source[0] if source else ""
+        db.execute("INSERT INTO books (id,title,source,pages,added,cover)"
+                   " VALUES (1,?,?,?,?,?)",
+                   (title_from_path(path), path,
+                    int(pages[0]) if pages and str(pages[0]).isdigit() else 0,
+                    "", cover))
+        db.execute("UPDATE sections SET book_id=1 WHERE book_id IS NULL")
+
+    db.execute("INSERT OR REPLACE INTO meta VALUES ('schema',?)", (str(SCHEMA_VERSION),))
+    db.commit()
+
+
+def title_from_path(path):
+    """A readable book name from a PDF filename."""
+    stem = os.path.splitext(os.path.basename(path or ""))[0]
+    return stem.replace("_", " ").strip() or "Untitled"
+
+
+def collection_name(db):
+    """What to call the whole file: its given name, else its first book."""
+    row = db.execute("SELECT value FROM meta WHERE key='name'").fetchone()
+    if row and row[0]:
+        return row[0]
+    first = db.execute("SELECT title FROM books ORDER BY id LIMIT 1").fetchone()
+    return first[0] if first else os.path.splitext(os.path.basename(DB["path"]))[0]
+
+
+def books_in(db):
+    """Every book in a collection, oldest first."""
+    return db.execute("SELECT id, title, source, pages FROM books ORDER BY id").fetchall()
+
+
 # ----------------------------------------------------------------- retrieval
 
 def connect():
@@ -92,6 +162,7 @@ def connect():
                  " Run: python -m rulebuddy.indexer index yourbook.pdf")
     db = sqlite3.connect(DB["path"], check_same_thread=False)
     db.row_factory = sqlite3.Row
+    ensure_schema(db)
     return db
 
 
@@ -115,8 +186,10 @@ def retrieve(db, question, limit=10):
     if not query:
         return []
     rows = db.execute("""
-        SELECT s.id, s.path, s.title, s.number, s.page_start, s.page_end, s.text, s.styles
+        SELECT s.id, s.path, s.title, s.number, s.page_start, s.page_end, s.text,
+               s.styles, b.title AS book
         FROM sections_fts f JOIN sections s ON s.id = f.rowid
+        LEFT JOIN books b ON b.id = s.book_id
         WHERE sections_fts MATCH ?
         ORDER BY bm25(sections_fts, 4.0, 2.0, 1.0) LIMIT ?""", (query, limit)).fetchall()
 
@@ -128,8 +201,10 @@ def retrieve(db, question, limit=10):
             if number == row["number"]:
                 continue
             for extra in db.execute(
-                "SELECT id,path,title,number,page_start,page_end,text,styles FROM sections"
-                " WHERE number=? AND part=0 LIMIT 1", (number,)):
+                "SELECT s.id,s.path,s.title,s.number,s.page_start,s.page_end,s.text,"
+                " s.styles, b.title AS book FROM sections s"
+                " LEFT JOIN books b ON b.id = s.book_id"
+                " WHERE s.number=? AND s.part=0 LIMIT 1", (number,)):
                 if extra["id"] not in found:
                     item = dict(extra)
                     item["cited"] = True
@@ -144,7 +219,10 @@ def build_prompt(question, sources, outline):
     budget = 60000
     for src in sources:
         text = src["text"][:6000]
-        block = (f"[#{src['id']} p.{src['page_start']}] {src['path']}"
+        # The book has to be in the header: page 87 means nothing on its own once
+        # a collection holds more than one book.
+        book = f"{src['book']} — " if src.get("book") else ""
+        block = (f"[#{src['id']} p.{src['page_start']}] {book}{src['path']}"
                  f"{' (cross-reference)' if src.get('cited') else ''}\n{text}\n")
         if budget - len(block) < 0:
             break
@@ -161,6 +239,8 @@ SYSTEM = """You answer questions about one rulebook. The user gives you excerpts
 Rules for your answer:
 - Use only the excerpts. Do not add outside knowledge about the game or system.
 - Cite every claim. Put the marker [#ID p.PAGE] at the end of the sentence it supports, using the ID and page from the excerpt header.
+- The excerpts may come from several books in one collection. Name the book in the sentence when it matters, and never merge page numbers from different books.
+- A supplement that revises the core book wins where they overlap. Say so when the two disagree.
 - If the excerpts do not settle the question, say so plainly, then name the terms or sections the user should search next.
 - Paraphrase. Quote at most one short line, and only when the exact wording decides the answer.
 - Be short. Lead with the ruling, then the conditions and exceptions.

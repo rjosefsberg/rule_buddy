@@ -20,7 +20,7 @@ import sqlite3
 import sys
 import threading
 import tkinter as tk
-from tkinter import filedialog, font as tkfont, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 from . import core
 
@@ -208,9 +208,13 @@ class App(tk.Tk):
 
         self.menu_target = None
         self.book_menu = tk.Menu(self, tearoff=0)
+        self.book_menu.add_command(label="Rename…", command=self.rename_target)
+        self.book_menu.add_command(label="Add a book to this collection…",
+                                   command=self.add_to_collection)
         self.book_menu.add_command(label="Reimport from PDF…", command=self.reimport_book)
         self.book_menu.add_separator()
-        self.book_menu.add_command(label="Delete book…", command=self.delete_book)
+        self.book_menu.add_command(label="Remove this book…", command=self.remove_from_collection)
+        self.book_menu.add_command(label="Delete collection…", command=self.delete_book)
         # Button-3 everywhere, and Button-2 as well for a one button Mac mouse.
         self.book_list.bind("<Button-3>", self.post_book_menu)
         if sys.platform == "darwin":
@@ -343,9 +347,7 @@ class App(tk.Tk):
     # ----------------------------------------------------------------- helpers
 
     def book_name(self):
-        row = self.db.execute("SELECT value FROM meta WHERE key='source'").fetchone()
-        name = os.path.basename(row["value"]) if row else core.DB["path"]
-        return f"{name} — Rulebook"
+        return f"{core.collection_name(self.db)} — Rulebook"
 
     def load_outline(self):
         rows = self.db.execute("SELECT title, level, page_start FROM sections"
@@ -355,10 +357,12 @@ class App(tk.Tk):
 
     def set_status(self, message=None):
         if message is None:
-            pages = self.db.execute("SELECT value FROM meta WHERE key='pages'").fetchone()
+            books = self.db.execute("SELECT COUNT(*) c, SUM(pages) p FROM books").fetchone()
             count = self.db.execute("SELECT COUNT(*) c FROM sections WHERE part=0").fetchone()
             model = core.CONFIG["model"] if core.CONFIG["key"] else "search only, no API key"
-            message = f"{pages['value'] if pages else '?'} pages · {count['c']} sections · {model}"
+            shelf = f"{books['c']} books · " if books and books["c"] > 1 else ""
+            message = (f"{shelf}{books['p'] or '?'} pages · {count['c']} sections"
+                       f" · {model}")
         self.status.configure(text=message)
 
     def write(self, text, *tags):
@@ -529,28 +533,62 @@ class App(tk.Tk):
         return os.path.join(core.app_dir(), setting)
 
     @staticmethod
-    def index_cover(path):
-        """The stored cover as a Tk image, shrunk to sidebar size.
+    def cover_image(png, height=COVER_HEIGHT):
+        """Stored cover bytes as a Tk image, shrunk to fit.
 
         PhotoImage.subsample only divides by whole numbers, which is why the
-        indexer stores the cover at a multiple of the height wanted here.
+        indexer stores covers at a multiple of the height wanted here.
         """
-        try:
-            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-            try:
-                row = db.execute("SELECT png FROM cover WHERE id=1").fetchone()
-            finally:
-                db.close()
-        except sqlite3.Error:
-            return None                    # older index, built before covers
-        if not row or not row[0]:
+        if not png:
             return None
         try:
-            full = tk.PhotoImage(data=row[0])
+            full = tk.PhotoImage(data=png)
         except tk.TclError:
             return None
-        step = max(1, round(full.height() / COVER_HEIGHT))
+        step = max(1, round(full.height() / height))
         return full.subsample(step, step) if step > 1 else full
+
+    @staticmethod
+    def read_collection(path):
+        """Name, cover and contents of an index file, in one pass.
+
+        Opened read only, so a collection can be listed without disturbing it.
+        Anything unreadable comes back as a bare filename rather than an error;
+        the sidebar has to show something.
+        """
+        stem = os.path.splitext(os.path.basename(path))[0].replace("_", " ")
+        out = {"label": stem, "cover": None, "books": []}
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return out
+        try:
+            try:
+                rows = db.execute("SELECT id, title, source, cover FROM books"
+                                  " ORDER BY id").fetchall()
+            except sqlite3.Error:
+                rows = []                  # older index, no books table yet
+            if rows:
+                out["books"] = [{"id": r[0], "title": r[1], "source": r[2] or "",
+                                 "cover": r[3]} for r in rows]
+                out["cover"] = rows[0][3]
+                name = db.execute("SELECT value FROM meta WHERE key='name'").fetchone()
+                out["label"] = (name[0] if name and name[0] else rows[0][1]) or stem
+                return out
+
+            # Version 1: one book, its name in meta and its cover in its own table.
+            source = db.execute("SELECT value FROM meta WHERE key='source'").fetchone()
+            if source and source[0]:
+                out["label"] = os.path.splitext(
+                    os.path.basename(source[0]))[0].replace("_", " ")
+            try:
+                cover = db.execute("SELECT png FROM cover WHERE id=1").fetchone()
+                out["cover"] = cover[0] if cover else None
+            except sqlite3.Error:
+                pass
+        finally:
+            db.close()
+        return out
 
     @staticmethod
     def index_source(path):
@@ -564,22 +602,6 @@ class App(tk.Tk):
         except sqlite3.Error:
             return ""
         return row[0] if row and row[0] else ""
-
-    @staticmethod
-    def index_label(path):
-        """The name to show for an index: the book it was built from, if it says."""
-        stem = os.path.splitext(os.path.basename(path))[0]
-        try:
-            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-            try:
-                row = db.execute("SELECT value FROM meta WHERE key='source'").fetchone()
-            finally:
-                db.close()
-        except sqlite3.Error:
-            return stem                    # not one of ours, or unreadable
-        if not row or not row[0]:
-            return stem
-        return os.path.splitext(os.path.basename(row[0]))[0].replace("_", " ")
 
     def scan_books(self):
         """Every index we know of: the books folder, plus whatever is open now.
@@ -599,9 +621,27 @@ class App(tk.Tk):
                 found.setdefault(os.path.normcase(extra), extra)
         current = os.path.abspath(core.DB["path"])
         found.setdefault(os.path.normcase(current), current)
-        books = [{"path": p, "label": self.index_label(p)} for p in found.values()]
+        books = []
+        for path in found.values():
+            entry = self.read_collection(path)
+            entry["path"] = path
+            books.append(entry)
         books.sort(key=lambda b: b["label"].lower())
         return books
+
+    def target(self, iid):
+        """Split a row id into its collection and, for a child row, its book.
+
+        Collections are numbered; a book inside one is "collection:book".
+        """
+        if not iid:
+            return None, None
+        head, _, book_id = str(iid).partition(":")
+        try:
+            collection = self.books[int(head)]
+        except (ValueError, IndexError):
+            return None, None
+        return collection, int(book_id) if book_id else None
 
     def remember_book(self, path):
         """Keep hold of an index that lives outside the books folder."""
@@ -623,10 +663,22 @@ class App(tk.Tk):
         self.covers = []
         current = os.path.normcase(os.path.abspath(core.DB["path"]))
         for i, book in enumerate(self.books):
-            cover = self.index_cover(book["path"])
+            cover = self.cover_image(book["cover"])
             self.covers.append(cover)
-            node = self.book_list.insert("", "end", iid=str(i), text=f" {book['label']}",
-                                         image=cover or "")
+            count = len(book["books"])
+            label = f" {book['label']}"
+            if count > 1:
+                label += f"  ({count} books)"
+            node = self.book_list.insert("", "end", iid=str(i), text=label,
+                                         image=cover or "", open=True)
+            # A collection of one is just that book; nesting it under itself
+            # would only add a disclosure triangle to click.
+            if count > 1:
+                for entry in book["books"]:
+                    thumb = self.cover_image(entry["cover"], COVER_HEIGHT // 2)
+                    self.covers.append(thumb)
+                    self.book_list.insert(node, "end", iid=f"{i}:{entry['id']}",
+                                          text=f" {entry['title']}", image=thumb or "")
             if os.path.normcase(book["path"]) == current:
                 self.book_list.selection_set(node)
                 self.book_list.see(node)
@@ -647,16 +699,189 @@ class App(tk.Tk):
         if not row:
             return
         self.menu_target = row
+        # "Remove this book" only means something on a book inside a collection.
+        _, book_id = self.target(row)
+        self.book_menu.entryconfigure("Remove this book…",
+                                      state="normal" if book_id else "disabled")
         try:
             self.book_menu.tk_popup(event.x_root, event.y_root)
         finally:
             self.book_menu.grab_release()
 
-    def reimport_book(self):
-        """Build a book's index again from the PDF it came from."""
-        if self.menu_target is None:
+    def rename_target(self):
+        """Rename whatever was right clicked: a collection, or a book in one."""
+        collection, book_id = self.target(self.menu_target)
+        if collection is None:
             return
-        book = self.books[int(self.menu_target)]
+        if self.busy:
+            self.set_status("Still answering. Try again when it finishes.")
+            return
+
+        if book_id:
+            entry = next((b for b in collection["books"] if b["id"] == book_id), None)
+            if entry is None:
+                return
+            what, current = "book", entry["title"]
+        else:
+            what, current = "collection", collection["label"]
+
+        name = simpledialog.askstring(f"Rename {what}", f"Name for this {what}:",
+                                      initialvalue=current, parent=self)
+        if name is None:
+            return
+        name = name.strip()
+        if not name or name == current:
+            return
+
+        open_now = os.path.abspath(collection["path"]) == os.path.abspath(core.DB["path"])
+        db = self.db if open_now and self.db is not None else None
+        own = db is None
+        try:
+            if own:
+                db = sqlite3.connect(collection["path"])
+            if book_id:
+                db.execute("UPDATE books SET title=? WHERE id=?", (name, book_id))
+            else:
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('name',?)", (name,))
+            db.commit()
+        except sqlite3.Error as err:
+            messagebox.showerror("Could not rename", str(err))
+            return
+        finally:
+            if own and db is not None:
+                db.close()
+
+        if open_now:
+            self.title(self.book_name())
+            self.set_status(f"Renamed to {name}.")
+        self.refresh_books()
+
+    def add_to_collection(self):
+        """Index another PDF into an existing collection."""
+        collection, _ = self.target(self.menu_target)
+        if collection is None:
+            return
+        if self.busy:
+            self.set_status("Still answering. Try again when it finishes.")
+            return
+        if indexer is None:
+            messagebox.showerror("Cannot add",
+                                 "PyMuPDF is missing, so PDFs cannot be indexed.")
+            return
+        pdf = filedialog.askopenfilename(
+            title=f"Add a book to {collection['label']}",
+            filetypes=[("PDF rulebook", "*.pdf"), ("PDF rulebook", "*.PDF")])
+        if not pdf:
+            return
+        if os.path.splitext(pdf)[1].lower() != ".pdf":
+            messagebox.showerror("Not a PDF", "Only PDF rulebooks can be indexed.")
+            return
+        try:
+            size = os.path.getsize(pdf)
+        except OSError as err:
+            messagebox.showerror("Cannot read that file", str(err))
+            return
+        if size > MAX_IMPORT_BYTES:
+            messagebox.showerror(
+                "That file is too large",
+                f"{os.path.basename(pdf)} is {size / 1_000_000:.0f} MB.\n"
+                f"The limit is {MAX_IMPORT_BYTES // 1_000_000} MB.")
+            return
+
+        self.busy = True
+        self.send.state(["disabled"])
+        self.more.state(["disabled"])
+        # Appending writes into the file we may be reading from, so let go first.
+        if os.path.abspath(collection["path"]) == os.path.abspath(core.DB["path"]):
+            self.db.close()
+            self.db = None
+        self.set_status(f"Adding {os.path.basename(pdf)}…")
+        threading.Thread(target=self.append_work,
+                         args=(pdf, collection["path"]), daemon=True).start()
+
+    def append_work(self, pdf, db_path, title=None):
+        """Add or replace a book in a collection, off the main thread."""
+        def report(stage, done, total):
+            share = f" {done}/{total}" if total else ""
+            self.inbox.put(("status", f"{stage}{share} — {os.path.basename(pdf)}"))
+
+        try:
+            indexer.add_book(pdf, db_path, progress=report, title=title)
+        except SystemExit as err:
+            self.inbox.put(("index_failed", str(err) or "The indexer stopped."))
+        except Exception as err:
+            self.inbox.put(("index_failed", f"{type(err).__name__}: {err}"))
+        else:
+            self.inbox.put(("indexed", db_path))
+
+    def remove_from_collection(self):
+        """Take one book back out of a collection."""
+        collection, book_id = self.target(self.menu_target)
+        if collection is None or not book_id:
+            return
+        if self.busy:
+            self.set_status("Still answering. Try again when it finishes.")
+            return
+        entry = next((b for b in collection["books"] if b["id"] == book_id), None)
+        if entry is None:
+            return
+        if len(collection["books"]) <= 1:
+            messagebox.showinfo(
+                "Cannot remove",
+                f"{entry['title']} is the only book in {collection['label']}.\n\n"
+                "Delete the whole collection instead.")
+            return
+        if not messagebox.askyesno(
+                "Remove this book?",
+                f"Take {entry['title']} out of {collection['label']}?\n\n"
+                "Its sections stop being searchable. The rest of the collection "
+                "is untouched, and the PDF is not deleted.",
+                icon="warning", default="no"):
+            return
+
+        open_now = os.path.abspath(collection["path"]) == os.path.abspath(core.DB["path"])
+        db = self.db if open_now and self.db is not None else None
+        try:
+            own = db is None
+            if own:
+                db = sqlite3.connect(collection["path"])
+            indexer.remove_book(db, book_id)
+            if own:
+                db.close()
+        except sqlite3.Error as err:
+            messagebox.showerror("Could not remove that book", str(err))
+            return
+        if open_now:
+            self.clear()                    # citations into that book are stale now
+            self.outline = self.load_outline()
+            self.set_status(f"Removed {entry['title']}.")
+        self.refresh_books()
+
+    def locate_pdf(self, title, recorded):
+        """Find the PDF for a book, asking when it is not where it should be."""
+        if recorded and os.path.exists(recorded):
+            return recorded
+        where = f"\n\nIt was built from:\n{recorded}" if recorded else ""
+        if not messagebox.askyesno(
+                "Where is the PDF?",
+                f"The PDF behind {title} is not where the index says.{where}"
+                "\n\nPick it now?"):
+            return None
+        pdf = filedialog.askopenfilename(
+            title=f"PDF for {title}",
+            filetypes=[("PDF rulebook", "*.pdf"), ("PDF rulebook", "*.PDF")])
+        if not pdf:
+            return None
+        if os.path.splitext(pdf)[1].lower() != ".pdf":
+            messagebox.showerror("Not a PDF", "Only PDF rulebooks can be indexed.")
+            return None
+        return pdf
+
+    def reimport_book(self):
+        """Rebuild from source: one book of a collection, or the whole thing."""
+        collection, book_id = self.target(self.menu_target)
+        if collection is None:
+            return
         if self.busy:
             self.set_status("Still answering. Try again when it finishes.")
             return
@@ -664,54 +889,102 @@ class App(tk.Tk):
             messagebox.showerror("Cannot reimport",
                                  "PyMuPDF is missing, so PDFs cannot be indexed.")
             return
+        if book_id:
+            self.reimport_one(collection, book_id)
+        else:
+            self.reimport_all(collection)
 
-        pdf = self.index_source(book["path"])
-        if not pdf or not os.path.exists(pdf):
-            # The book moved, or was indexed on another machine. Ask for it.
-            where = f"\n\nIt was built from:\n{pdf}" if pdf else ""
-            if not messagebox.askyesno(
-                    "Where is the PDF?",
-                    f"The PDF behind {book['label']} is not where the index says."
-                    f"{where}\n\nPick it now?"):
-                return
-            pdf = filedialog.askopenfilename(
-                title=f"PDF for {book['label']}",
-                filetypes=[("PDF rulebook", "*.pdf"), ("PDF rulebook", "*.PDF")])
-            if not pdf:
-                return
-            if os.path.splitext(pdf)[1].lower() != ".pdf":
-                messagebox.showerror("Not a PDF", "Only PDF rulebooks can be indexed.")
-                return
+    def reimport_one(self, collection, book_id):
+        """Rebuild a single book inside a collection, in place.
 
+        add_book writes the new rows before dropping the old ones, in a single
+        transaction, so the collection survives a failure unharmed.
+        """
+        entry = next((b for b in collection["books"] if b["id"] == book_id), None)
+        if entry is None:
+            return
+        pdf = self.locate_pdf(entry["title"], entry["source"])
+        if not pdf:
+            return
         if not messagebox.askyesno(
                 "Reimport this book?",
-                f"Build the index for {book['label']} again from:\n"
-                f"{os.path.basename(pdf)}\n\n"
-                "The current index is replaced, and the conversation is cleared."):
+                f"Rebuild {entry['title']} from:\n{os.path.basename(pdf)}\n\n"
+                "The rest of the collection is untouched, and the conversation "
+                "is cleared."):
             return
 
-        self.pending_import = pdf
         self.busy = True
         self.send.state(["disabled"])
         self.more.state(["disabled"])
-        # Windows will not let the file be replaced while we hold it open.
-        if os.path.abspath(book["path"]) == os.path.abspath(core.DB["path"]):
+        if os.path.abspath(collection["path"]) == os.path.abspath(core.DB["path"]):
             self.db.close()
             self.db = None
-        # build() clears its target before it starts, so a reimport that fails
-        # partway would take the working index with it. Build beside it instead
-        # and swap only once the new one is whole.
-        scratch = book["path"] + ".rebuilding"
-        self.pending_swap = (scratch, book["path"])
         self.set_status(f"Indexing {os.path.basename(pdf)}…")
-        threading.Thread(target=self.index_work, args=(pdf, scratch),
+        threading.Thread(target=self.append_work,
+                         args=(pdf, collection["path"], entry["title"]),
                          daemon=True).start()
+
+    def reimport_all(self, collection):
+        """Rebuild every book in a collection, keeping names and order."""
+        books = collection["books"]
+        if not books:
+            messagebox.showinfo("Nothing to reimport",
+                                f"{collection['label']} lists no books.")
+            return
+
+        plan = []
+        for entry in books:
+            pdf = self.locate_pdf(entry["title"], entry["source"])
+            if not pdf:
+                messagebox.showinfo(
+                    "Reimport stopped",
+                    f"Without a PDF for {entry['title']} the collection cannot be "
+                    "rebuilt whole, so nothing was changed.")
+                return
+            plan.append((pdf, entry["title"]))
+
+        listing = "\n".join(f"  · {title}" for _, title in plan)
+        if not messagebox.askyesno(
+                "Reimport this collection?",
+                f"Rebuild all {len(plan)} book(s) in {collection['label']}?\n\n"
+                f"{listing}\n\nThis takes a while. The conversation is cleared."):
+            return
+
+        self.busy = True
+        self.send.state(["disabled"])
+        self.more.state(["disabled"])
+        if os.path.abspath(collection["path"]) == os.path.abspath(core.DB["path"]):
+            self.db.close()
+            self.db = None
+        scratch = collection["path"] + ".rebuilding"
+        self.pending_swap = (scratch, collection["path"])
+        self.set_status(f"Rebuilding {collection['label']}…")
+        threading.Thread(target=self.rebuild_work,
+                         args=(plan, scratch, collection["label"]),
+                         daemon=True).start()
+
+    def rebuild_work(self, plan, scratch, name):
+        """Rebuild a whole collection off the main thread."""
+        def report(stage, done, total):
+            share = f" {done}/{total}" if total else ""
+            self.inbox.put(("status", f"{stage}{share}"))
+
+        try:
+            indexer.rebuild_collection(scratch, plan, name=name, progress=report)
+        except SystemExit as err:
+            self.inbox.put(("index_failed", str(err) or "The indexer stopped."))
+        except Exception as err:
+            self.inbox.put(("index_failed", f"{type(err).__name__}: {err}"))
+        else:
+            self.inbox.put(("indexed", scratch))
 
     def delete_book(self):
         """Remove a book's index file, after asking."""
         if self.menu_target is None:
             return
-        book = self.books[int(self.menu_target)]
+        book, _ = self.target(self.menu_target)
+        if book is None:
+            return
         open_now = (os.path.normcase(book["path"])
                     == os.path.normcase(os.path.abspath(core.DB["path"])))
         others = [b for b in self.books if b["path"] != book["path"]]
@@ -753,7 +1026,9 @@ class App(tk.Tk):
         picked = self.book_list.selection()
         if not picked:
             return
-        book = self.books[int(picked[0])]
+        book, _ = self.target(picked[0])
+        if book is None:
+            return
         if os.path.normcase(book["path"]) == os.path.normcase(os.path.abspath(core.DB["path"])):
             return                          # already open, nothing to do
         if self.busy:
@@ -905,7 +1180,9 @@ class App(tk.Tk):
                  else f"pp.{src['page_start']}–{src['page_end']}")
         self.excerpt.configure(state="normal")
         self.excerpt.delete("1.0", "end")
-        self.excerpt.insert("end", f"#{src['id']}  {pages}  {src['path']}\n", "head")
+        # Name the book: a page number alone is ambiguous across a collection.
+        book = f"{src['book']}  ·  " if src.get("book") else ""
+        self.excerpt.insert("end", f"#{src['id']}  {book}{pages}  {src['path']}\n", "head")
 
         # Paragraphs go in one at a time, so remember where each one landed:
         # the styles column addresses the stored text, not the widget.
