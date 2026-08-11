@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""rulebook_core.py - retrieval and the model call, shared by the app.
+"""core.py - retrieval and the model call, shared by the app.
 
-Not meant to be run on its own. Build an index with rulebook.py, then use
-rulebook_app.py for the window:
+Not meant to be run on its own. Build an index with the indexer, then open
+the window:
 
-    python rulebook.py index yourbook.pdf
+    python -m rulebuddy.indexer index yourbook.pdf
     copy config.example.json config.json   # then put your key in it
-    python rulebook_app.py
+    python -m rulebuddy
 
-Settings come from config.json next to this file. ANTHROPIC_API_KEY in the
-environment overrides the key there, and command line flags override the rest.
+Settings come from config.json in the application folder: the project root when
+running from source, the folder holding the exe when packaged. ANTHROPIC_API_KEY
+in the environment overrides the key there, and command line flags override the
+rest.
 """
 
 import json
@@ -32,9 +34,23 @@ when where why how can could may might must shall should will would there here a
 own same so too very just also any each few more most other some such only does can do get got""".split())
 
 DB = {"path": "rulebook.db"}
-CONFIG = {"model": DEFAULT_MODEL, "key": os.environ.get("ANTHROPIC_API_KEY", "")}
+CONFIG = {"model": DEFAULT_MODEL, "key": os.environ.get("ANTHROPIC_API_KEY", ""),
+          "books_dir": "books"}
 
-DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+def app_dir():
+    """The folder holding config.json and books/.
+
+    Packaged, that is the folder the exe sits in, which is what the user sees.
+    From source it is the project root, three levels up from this file:
+    src/rulebuddy/core.py -> src/rulebuddy -> src -> the root.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+DEFAULT_CONFIG = os.path.join(app_dir(), "config.json")
+DEFAULT_BOOKS = os.path.join(app_dir(), "books")
 
 
 def load_config(path=None):
@@ -62,6 +78,9 @@ def load_config(path=None):
     db_path = str(data.get("db", "")).strip()
     if db_path:
         DB["path"] = db_path
+    books = str(data.get("books_dir", "")).strip()
+    if books:
+        CONFIG["books_dir"] = books
     return data
 
 
@@ -69,7 +88,8 @@ def load_config(path=None):
 
 def connect():
     if not os.path.exists(DB["path"]):
-        sys.exit(f"No index at {DB['path']}. Run: python rulebook.py index yourbook.pdf")
+        sys.exit(f"No index at {DB['path']}."
+                 " Run: python -m rulebuddy.indexer index yourbook.pdf")
     db = sqlite3.connect(DB["path"], check_same_thread=False)
     db.row_factory = sqlite3.Row
     return db
@@ -178,4 +198,4 @@ def ask_model(question, sources, outline, history):
 
 
 if __name__ == "__main__":
-    sys.exit("This module holds shared code. Run rulebook_app.py instead.")
+    sys.exit("This module holds shared code. Run: python -m rulebuddy")

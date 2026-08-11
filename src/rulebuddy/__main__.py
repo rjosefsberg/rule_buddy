@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""launcher.py - entry point for the packaged build.
+"""__main__.py - entry point for both `python -m rulebuddy` and the packaged exe.
 
 A double-clicked exe does not get a useful working directory, and config.json
-sits next to the exe rather than inside the bundle. This resolves both against
-the exe's own folder, then hands off to the normal app.
+sits beside the exe rather than inside the bundle. core.app_dir() resolves that;
+this module makes it the working directory and reports startup failures in a
+dialog, since a windowed build has no console to print to.
 """
 
 import os
 import sys
-
-
-def home():
-    """The folder the user sees: the exe's folder when frozen, else the source."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
 
 
 def complain(message):
@@ -32,17 +26,13 @@ def complain(message):
 
 
 def main():
-    base = home()
+    from . import core
+
+    base = core.app_dir()
     os.chdir(base)
+    core.load_config()
 
-    import rulebook_core as core
-    core.DEFAULT_CONFIG = os.path.join(base, "config.json")
-    core.DB["path"] = os.path.join(base, "rulebook.db")
-
-    import rulebook_app
-
-    data = core.load_config(core.DEFAULT_CONFIG)
-    db = data.get("db") or core.DB["path"]
+    db = core.DB["path"]
     if not os.path.isabs(db):
         db = os.path.join(base, db)
     core.DB["path"] = db
@@ -51,8 +41,8 @@ def main():
         complain(f"The rulebook index is missing.\n\nExpected it here:\n{db}\n\n"
                  "Copy the whole Rule Buddy folder off the drive and try again.")
 
-    app = rulebook_app.App(db, core.CONFIG["model"])
-    app.mainloop()
+    from .app import App
+    App(db, core.CONFIG["model"]).mainloop()
 
 
 if __name__ == "__main__":

@@ -1,7 +1,10 @@
 # Secrets. config.example.json is the tracked template; config.json holds a real key.
 config.json
 
-# Built indexes. Rebuild with: python rulebook.py index yourbook.pdf
+# Built indexes. Rebuild with: python -m rulebuddy.indexer index yourbook.pdf
+# The folder is kept (see books/.gitkeep); its contents are not.
+books/*
+!books/.gitkeep
 *.db
 *.db-wal
 *.db-shm

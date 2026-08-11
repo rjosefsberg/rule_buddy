@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""rulebook.py - index a bookmarked PDF rulebook and search it from the command line.
+"""indexer.py - index a bookmarked PDF rulebook and search it from the command line.
 
 Requires: pip install pymupdf
 
-    python rulebook.py index book.pdf
-    python rulebook.py search "sustained action"
-    python rulebook.py show 42
-    python rulebook.py page 271
-    python rulebook.py refs 14.3
-    python rulebook.py toc
+    python -m rulebuddy.indexer index book.pdf
+    python -m rulebuddy.indexer search "sustained action"
+    python -m rulebuddy.indexer show 42
+    python -m rulebuddy.indexer page 271
+    python -m rulebuddy.indexer refs 14.3
+    python -m rulebuddy.indexer toc
+    python -m rulebuddy.indexer cover book.pdf --db book.db
 """
 
 import argparse
@@ -28,6 +29,7 @@ except ImportError:  # older installs expose the same module as fitz
         sys.exit("PyMuPDF is missing. Run: pip install pymupdf")
 
 DEFAULT_DB = "rulebook.db"
+COVER_HEIGHT = 240      # stored tall; the sidebar subsamples it down
 MAX_CHUNK_WORDS = 450
 FTS_OPERATORS = re.compile(r'["*(]|\b(?:AND|OR|NOT|NEAR)\b')
 # Matches rule numbers such as 14, 14.3, 14.3.2, A.4
@@ -457,6 +459,34 @@ def mark_skipped(entries, patterns):
     return matched
 
 
+def render_cover(doc, height=COVER_HEIGHT):
+    """Page one as PNG bytes, tall enough to still look right when scaled down.
+
+    Tk can only shrink an image by whole-number steps, so the stored height is
+    a multiple of what the sidebar shows rather than the display size itself.
+    """
+    page = doc.load_page(0)
+    box = page.rect
+    if not box.height:
+        return None
+    zoom = height / box.height
+    pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+    return pixmap.tobytes("png")
+
+
+def store_cover(db, doc):
+    """Keep the cover inside the index, so one book stays one portable file."""
+    db.execute("CREATE TABLE IF NOT EXISTS cover ("
+               "id INTEGER PRIMARY KEY CHECK (id = 1), png BLOB)")
+    try:
+        png = render_cover(doc)
+    except Exception as err:              # a broken first page must not lose the index
+        print(f"Could not render the cover: {err}")
+        return
+    if png:
+        db.execute("INSERT OR REPLACE INTO cover (id, png) VALUES (1, ?)", (png,))
+
+
 def build(pdf_path, db_path, keep_heads=False, skip=(), progress=None):
     if os.path.exists(db_path):
         os.remove(db_path)
@@ -525,6 +555,7 @@ def build(pdf_path, db_path, keep_heads=False, skip=(), progress=None):
                " SELECT id,title,path,text FROM sections")
     db.execute("INSERT INTO meta VALUES ('source',?)", (os.path.abspath(pdf_path),))
     db.execute("INSERT INTO meta VALUES ('pages',?)", (str(doc.page_count),))
+    store_cover(db, doc)
     if matched:
         db.execute("INSERT INTO meta VALUES ('skipped',?)", ("; ".join(matched),))
     db.commit()
@@ -536,7 +567,8 @@ def build(pdf_path, db_path, keep_heads=False, skip=(), progress=None):
 
 def connect(db_path):
     if not os.path.exists(db_path):
-        sys.exit(f"No index at {db_path}. Run: python rulebook.py index yourbook.pdf")
+        sys.exit(f"No index at {db_path}."
+                 " Run: python -m rulebuddy.indexer index yourbook.pdf")
     db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     return db
@@ -575,6 +607,18 @@ def render(text, indent="    "):
         else:
             out.append(wrap(line, indent))
     return "\n\n".join(out)
+
+
+def cmd_cover(args):
+    """Backfill a cover into an index built before covers existed."""
+    if not os.path.exists(args.db):
+        sys.exit(f"No index at {args.db}.")
+    doc = pymupdf.open(args.pdf)
+    db = sqlite3.connect(args.db)
+    store_cover(db, doc)
+    db.commit()
+    db.close()
+    print(f"Cover from {os.path.basename(args.pdf)} -> {args.db}")
 
 
 def cmd_search(args):
@@ -712,6 +756,10 @@ def main():
     p.add_argument("words", nargs="+")
     p.add_argument("-n", "--limit", type=int, default=6)
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("cover", help="add or replace the cover of an existing index")
+    p.add_argument("pdf")
+    p.set_defaults(func=cmd_cover)
 
     args = parser.parse_args()
     args.func(args)

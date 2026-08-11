@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""rulebook_app.py - a desktop window over the rulebook index.
+"""app.py - a desktop window over the rulebook index.
 
-    python rulebook.py index yourbook.pdf
+    python -m rulebuddy.indexer index yourbook.pdf
     copy config.example.json config.json   # then put your key in it
-    python rulebook_app.py
+    python -m rulebuddy
 
 Uses Tk, which ships with Python, so the window is a real native window with
-native menus. Retrieval and the API call come from rulebook_core.py, which must
-sit in the same folder. On Debian or Ubuntu, install Tk with:
+native menus. Retrieval and the API call come from core.py. On Debian or
+Ubuntu, install Tk with:
     sudo apt install python3-tk
 """
 
@@ -16,23 +16,24 @@ import json
 import os
 import queue
 import re
+import sqlite3
 import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-try:
-    import rulebook_core as core
-except ImportError:
-    sys.exit("rulebook_core.py must sit in the same folder as this file.")
+from . import core
 
 try:
-    import rulebook as indexer
+    from . import indexer
 except (ImportError, SystemExit):
     indexer = None      # searching still works; importing a new book will not
 
 CITE = re.compile(r"\[#(\d+)[^\]]*?(\d+)\]")
 MAX_IMPORT_BYTES = 100 * 1_000_000
+SIDEBAR_WIDTH = 210
+RAIL_WIDTH = 26
+COVER_HEIGHT = 60       # on screen; the indexer stores covers at a multiple of it
 INTRO = ("Answers cite the section and page. Click a citation to read the excerpt "
          "it came from, so you can check the book yourself.\n\n"
          "Questions work best in the book's own words. Try \"cover ranged attack\" "
@@ -62,11 +63,12 @@ class App(tk.Tk):
         self.busy = False
 
         self.title(self.book_name())
-        self.geometry("1040x720")
+        self.geometry("1260x800")
         self.minsize(620, 420)
         self.set_theme()
         self.build_menu()
         self.build_layout()
+        self.refresh_books()
         self.show_intro()
         self.after(80, self.drain)
         self.entry.focus_set()
@@ -122,6 +124,7 @@ class App(tk.Tk):
         self.excerpt.tag_configure("strong", font=f["bold"])
         self.excerpt.tag_configure("emph", font=f["italic"])
         self.excerpt.tag_configure("strongemph", font=f["bolditalic"])
+        self.side_empty.configure(font=f["small"])
 
     # ---------------------------------------------------------------- widgets
 
@@ -145,6 +148,9 @@ class App(tk.Tk):
         menu.add_cascade(label="Edit", menu=m_edit)
 
         m_view = tk.Menu(menu, tearoff=0)
+        self.show_books = tk.BooleanVar(value=True)
+        m_view.add_checkbutton(label="Book panel", accelerator=f"{key}+B",
+                               variable=self.show_books, command=self.toggle_sidebar)
         self.show_sources = tk.BooleanVar(value=True)
         m_view.add_checkbutton(label="Sections pane", variable=self.show_sources,
                                command=self.toggle_sources)
@@ -159,13 +165,76 @@ class App(tk.Tk):
         self.bind_all(f"<{accel}-i>", lambda e: self.import_rulebook())
         self.bind_all(f"<{accel}-o>", lambda e: self.open_index())
         self.bind_all(f"<{accel}-k>", lambda e: self.clear())
+        self.bind_all(f"<{accel}-b>", lambda e: self.set_sidebar(not self.show_books.get()))
         self.bind_all(f"<{accel}-plus>", lambda e: self.zoom(1))
         self.bind_all(f"<{accel}-equal>", lambda e: self.zoom(1))
         self.bind_all(f"<{accel}-minus>", lambda e: self.zoom(-1))
 
+    def build_sidebar(self):
+        """The left panel, plus the thin rail that stands in for it when closed.
+
+        Both are built once and swapped by packing, so the panel keeps its
+        contents and scroll position across a collapse.
+        """
+        f = self.fonts()
+
+        self.side = ttk.Frame(self, width=SIDEBAR_WIDTH)
+        self.side.pack(side=tk.LEFT, fill=tk.Y)
+        # self.side.pack_propagate(False)      # hold the width against the contents
+
+        head = ttk.Frame(self.side, padding=(10, 6, 4, 6))
+        head.pack(fill=tk.X)
+        ttk.Label(head, text="Books", font=f["bold"]).pack(side=tk.LEFT)
+        self.side_close = ttk.Label(head, text="‹", foreground=self.colors["muted"],
+                                    cursor="hand2", padding=(6, 0))
+        self.side_close.pack(side=tk.RIGHT)
+        self.side_close.bind("<Button-1>", lambda e: self.set_sidebar(False))
+        ttk.Separator(self.side, orient=tk.HORIZONTAL).pack(fill=tk.X)
+
+        self.side_body = ttk.Frame(self.side, padding=(10, 10))
+        self.side_body.pack(fill=tk.BOTH, expand=True)
+
+        # One row per index file. show="tree" drops the header, so it reads as a
+        # list rather than a second table next to the sections pane.
+        ttk.Style(self).configure("Books.Treeview", rowheight=COVER_HEIGHT + 8)
+        self.book_list = ttk.Treeview(self.side_body, show="tree", selectmode="browse",
+                                      style="Books.Treeview")
+        self.book_list.column("#0", width=SIDEBAR_WIDTH - 20, stretch=True)
+        self.book_list.bind("<<TreeviewSelect>>", self.on_pick_book)
+        self.side_empty = ttk.Label(self.side_body, wraplength=SIDEBAR_WIDTH - 40,
+                                    justify="left", foreground=self.colors["muted"],
+                                    font=f["small"],
+                                    text="Only one book. Put more .db indexes in the "
+                                         "books folder, or use File → Open index.")
+        self.side_empty.pack(anchor="nw")
+
+        self.rail = ttk.Frame(self, width=RAIL_WIDTH)
+        self.rail.pack_propagate(False)
+        self.side_open_btn = ttk.Label(self.rail, text="›", foreground=self.colors["muted"],
+                                       cursor="hand2", padding=(0, 8))
+        self.side_open_btn.pack(fill=tk.X)
+        self.side_open_btn.bind("<Button-1>", lambda e: self.set_sidebar(True))
+
+    def set_sidebar(self, opening):
+        """Swap panel for rail, or back. Keeps both left of the divider."""
+        self.show_books.set(opening)
+        showing, hiding = (self.side, self.rail) if opening else (self.rail, self.side)
+        hiding.pack_forget()
+        showing.pack(side=tk.LEFT, fill=tk.Y, before=self.divider)
+
+    def toggle_sidebar(self):
+        self.set_sidebar(self.show_books.get())
+
     def build_layout(self):
         self.status = ttk.Label(self, anchor="w", padding=(10, 3))
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # The sidebar and its collapsed rail sit outside the paned window, so
+        # dragging the sash never resizes them and the width stays honest.
+        self.divider = ttk.Separator(self, orient=tk.VERTICAL)
+        self.build_sidebar()
+        self.divider.pack(side=tk.LEFT, fill=tk.Y)
+
         self.panes = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self.panes.pack(fill=tk.BOTH, expand=True)
 
@@ -319,7 +388,7 @@ class App(tk.Tk):
             return
         if indexer is None:
             messagebox.showerror("Cannot import",
-                                 "rulebook.py must sit in the same folder as this file.")
+                                 "PyMuPDF is missing, so PDFs cannot be indexed.")
             return
         path = filedialog.askopenfilename(
             title="Import a rulebook",
@@ -404,6 +473,116 @@ class App(tk.Tk):
         self.set_status() if self.db else self.status.configure(text="No index open.")
         messagebox.showerror("Could not index that rulebook", detail)
 
+    # ------------------------------------------------------------------ books
+
+    def books_dir(self):
+        """Where the book indexes live, resolved next to config.json."""
+        setting = core.CONFIG.get("books_dir") or "books"
+        if os.path.isabs(setting):
+            return setting
+        return os.path.join(core.app_dir(), setting)
+
+    @staticmethod
+    def index_cover(path):
+        """The stored cover as a Tk image, shrunk to sidebar size.
+
+        PhotoImage.subsample only divides by whole numbers, which is why the
+        indexer stores the cover at a multiple of the height wanted here.
+        """
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                row = db.execute("SELECT png FROM cover WHERE id=1").fetchone()
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return None                    # older index, built before covers
+        if not row or not row[0]:
+            return None
+        try:
+            full = tk.PhotoImage(data=row[0])
+        except tk.TclError:
+            return None
+        step = max(1, round(full.height() / COVER_HEIGHT))
+        return full.subsample(step, step) if step > 1 else full
+
+    @staticmethod
+    def index_label(path):
+        """The name to show for an index: the book it was built from, if it says."""
+        stem = os.path.splitext(os.path.basename(path))[0]
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                row = db.execute("SELECT value FROM meta WHERE key='source'").fetchone()
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return stem                    # not one of ours, or unreadable
+        if not row or not row[0]:
+            return stem
+        return os.path.splitext(os.path.basename(row[0]))[0].replace("_", " ")
+
+    def scan_books(self):
+        """Every index we know of: the books folder, plus whatever is open now.
+
+        Sorted by name, so the list does not reshuffle when a book is opened
+        from somewhere else on disk.
+        """
+        found = {}
+        directory = self.books_dir()
+        if os.path.isdir(directory):
+            for name in os.listdir(directory):
+                if name.lower().endswith(".db"):
+                    full = os.path.abspath(os.path.join(directory, name))
+                    found[os.path.normcase(full)] = full
+        current = os.path.abspath(core.DB["path"])
+        found.setdefault(os.path.normcase(current), current)
+        books = [{"path": p, "label": self.index_label(p)} for p in found.values()]
+        books.sort(key=lambda b: b["label"].lower())
+        return books
+
+    def refresh_books(self):
+        """Rebuild the sidebar list and highlight whichever book is open."""
+        self.books = self.scan_books()
+        for row in self.book_list.get_children():
+            self.book_list.delete(row)
+        # Tk drops an image the moment nothing references it, so the rows would
+        # come up blank without this list holding on to them.
+        self.covers = []
+        current = os.path.normcase(os.path.abspath(core.DB["path"]))
+        for i, book in enumerate(self.books):
+            cover = self.index_cover(book["path"])
+            self.covers.append(cover)
+            node = self.book_list.insert("", "end", iid=str(i), text=f" {book['label']}",
+                                         image=cover or "")
+            if os.path.normcase(book["path"]) == current:
+                self.book_list.selection_set(node)
+                self.book_list.see(node)
+        # The placeholder only earns its space when there is nothing to list.
+        if len(self.books) > 1:
+            self.side_empty.pack_forget()
+            self.book_list.pack(fill=tk.BOTH, expand=True)
+        else:
+            self.book_list.pack_forget()
+            self.side_empty.pack(anchor="nw")
+
+    def on_pick_book(self, _event=None):
+        picked = self.book_list.selection()
+        if not picked:
+            return
+        book = self.books[int(picked[0])]
+        if os.path.normcase(book["path"]) == os.path.normcase(os.path.abspath(core.DB["path"])):
+            return                          # already open, nothing to do
+        if self.busy:
+            self.set_status("Still answering. Try again when it finishes.")
+            self.refresh_books()            # put the highlight back where it was
+            return
+        try:
+            self.use_index(book["path"])
+        except SystemExit as err:
+            messagebox.showerror("Cannot open index", str(err))
+            self.refresh_books()
+
     def use_index(self, path):
         """Point the window at an index file and refresh everything it feeds."""
         core.DB["path"] = path
@@ -412,6 +591,7 @@ class App(tk.Tk):
         self.clear()
         self.title(self.book_name())
         self.set_status()
+        self.refresh_books()
 
     def open_index(self):
         path = filedialog.askopenfilename(title="Open a rulebook index",

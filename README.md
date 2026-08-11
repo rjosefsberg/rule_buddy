@@ -39,24 +39,30 @@ git clone https://github.com/rjosefsberg/rule_buddy.git
 cd rule_buddy
 uv sync                      # or: pip install pymupdf
 
-python rulebook.py index yourbook.pdf
+python -m rulebuddy.indexer index yourbook.pdf --db books/yourbook.db
 cp config.example.json config.json    # then put your key in it
-python rulebook_app.py
+python -m rulebuddy
 ```
 
-Indexing a full-size rulebook takes a few minutes and produces `rulebook.db`.
+Indexing a full-size rulebook takes a few minutes. Drop the resulting `.db` in
+`books/` and it appears in the sidebar.
 
 ## Configuration
 
-`config.json` sits next to the code and is read at startup:
+`config.json` sits in the application folder — the project root from source, the
+folder holding the exe when packaged — and is read at startup:
 
 ```json
 {
   "api_key": "sk-ant-...",
   "model": "claude-sonnet-5",
-  "db": "rulebook.db"
+  "db": "books/rulebook.db",
+  "books_dir": "books"
 }
 ```
+
+`db` is the book opened on startup. `books_dir` is scanned for every other `.db`
+to fill the sidebar; relative paths resolve against the application folder.
 
 `ANTHROPIC_API_KEY` in the environment overrides the key in the file, and command
 line flags (`--db`, `--model`, `--config`) override the rest. `config.json` is
@@ -74,17 +80,25 @@ not use your phrasing.
 - **Ask more** keeps the current thread and answers over everything found so far.
 - Clicking a `[#412 p.87]` marker opens that excerpt.
 
+The sidebar on the left lists every book in `books_dir`, each with the cover of
+the PDF it was built from. Clicking one switches books, which clears the
+conversation — excerpt IDs mean something different in another index. Collapse
+the panel with **Ctrl+B**, or the chevron in its header.
+
 ## Command line
 
-`rulebook.py` is usable on its own, without the window or an API key:
+The indexer is usable on its own, without the window or an API key:
 
 ```sh
-python rulebook.py search "sustained action"   # keyword search
-python rulebook.py show 42                     # one chunk and its cross-references
-python rulebook.py page 271                    # sections on a page
-python rulebook.py refs 14.3                   # sections citing a rule number
-python rulebook.py toc                         # the outline
+python -m rulebuddy.indexer search "sustained action"   # keyword search
+python -m rulebuddy.indexer show 42        # one chunk and its cross-references
+python -m rulebuddy.indexer page 271       # sections on a page
+python -m rulebuddy.indexer refs 14.3      # sections citing a rule number
+python -m rulebuddy.indexer toc            # the outline
+python -m rulebuddy.indexer --db books/x.db cover book.pdf   # backfill a cover
 ```
+
+Every subcommand takes `--db` to pick which index it works on.
 
 ## Packaging a standalone build
 
@@ -94,16 +108,21 @@ they can double-click:
 ```sh
 pip install pyinstaller
 python -m PyInstaller --noconfirm --clean --windowed \
-  --name "Rule Buddy" --icon rulebuddy.ico --paths . \
-  --collect-all pymupdf --hidden-import rulebook \
+  --name "Rule Buddy" --icon src/rulebuddy/assets/rulebuddy.ico --paths src \
+  --collect-all pymupdf \
   --distpath build_out/dist --workpath build_out/work --specpath build_out \
-  launcher.py
+  run.py
 ```
 
-Then copy `config.json` and `rulebook.db` next to the built `Rule Buddy.exe`.
-`launcher.py` exists for this build: a double-clicked exe gets an arbitrary working
-directory, so it resolves both files against the exe's own folder and reports
-failures in a dialog rather than to a console that is not there.
+Then copy `config.json` and a `books/` folder next to the built `Rule Buddy.exe`.
+
+The build goes through `run.py`, not `rulebuddy/__main__.py`: a frozen entry
+script runs as a top-level module with no package context, so the relative
+imports inside the package fail there. `run.py` puts the package on the path and
+calls `main()` by absolute import. `core.app_dir()` is what lets both forms find
+`config.json` and `books/` — the exe's folder when frozen, the project root when
+not — and startup failures surface in a dialog rather than on a console that is
+not there.
 
 The result is a folder, not a single file — the exe needs the `_internal` directory
 beside it. Ship the whole folder together.
@@ -114,16 +133,35 @@ the key when the loan ends.
 
 ## Layout
 
-| File | |
-| --- | --- |
-| `rulebook.py` | PDF extraction, chunking, index building, and the CLI |
-| `rulebook_core.py` | retrieval and the API call, shared by the app |
-| `rulebook_app.py` | the Tk window |
-| `launcher.py` | entry point for the packaged build |
-| `config.example.json` | settings template |
+```
+rule_buddy/
+  config.example.json      settings template
+  run.py                   entry point PyInstaller builds from
+  books/                   the .db indexes, one per system
+  src/rulebuddy/
+    __main__.py            python -m rulebuddy
+    app.py                 the Tk window
+    core.py                retrieval and the API call
+    indexer.py             PDF extraction, chunking, index building, the CLI
+    assets/rulebuddy.ico
+```
 
-Indexes (`*.db`), source PDFs, build output, and the real `config.json` are
-gitignored.
+Indexes, source PDFs, build output, and the real `config.json` are gitignored.
+
+## Covers
+
+Indexing renders page one of the PDF and stores it as PNG bytes in a `cover`
+table inside the index, so a book stays a single portable file — copy the `.db`
+anywhere and its cover travels with it. Indexes built before covers existed
+still open fine and simply show no image; give one a cover without a full
+re-index using:
+
+```sh
+python -m rulebuddy.indexer --db books/yourbook.db cover yourbook.pdf
+```
+
+Covers are stored taller than they are shown, because Tk can only shrink an
+image by whole-number steps.
 
 ## A note on books
 
