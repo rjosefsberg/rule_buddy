@@ -50,7 +50,7 @@ SEARCH_INTRO = ("Type words from the book and press Search.\n\n"
 class KeyDialog(tk.Toplevel):
     """Ask for an API key, with the choice of keeping it past this session."""
 
-    def __init__(self, parent, current=""):
+    def __init__(self, parent, current="", muted="#8C8C8C"):
         super().__init__(parent)
         self.transient(parent)
         self.title("Anthropic API key")
@@ -71,7 +71,7 @@ class KeyDialog(tk.Toplevel):
         self.save = tk.BooleanVar(value=bool(current))
         ttk.Checkbutton(body, variable=self.save, text="Save it in config.json for next time"
                         ).pack(anchor="w", pady=(10, 0))
-        ttk.Label(body, wraplength=430, justify="left", foreground="#8C8C8C",
+        ttk.Label(body, wraplength=430, justify="left", foreground=muted,
                   text="Saved keys are stored as plain text next to the app. Leave "
                        "this off on a shared machine.").pack(anchor="w", pady=(2, 0))
 
@@ -83,6 +83,10 @@ class KeyDialog(tk.Toplevel):
 
         self.bind("<Return>", lambda e: self.accept())
         self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        self.geometry("+%d+%d" % (
+            parent.winfo_rootx() + max(0, (parent.winfo_width() - self.winfo_width()) // 2),
+            parent.winfo_rooty() + 90))
         self.entry.focus_set()
         self.grab_set()
         self.wait_window(self)
@@ -110,7 +114,6 @@ class App(tk.Tk):
         self.outline = self.load_outline()
         self.history = []
         self.pending = ""
-        self.pending_import = None
         self.pending_swap = None
         # Indexes opened from outside the books folder, kept for this session so
         # they do not vanish from the list when another book is opened.
@@ -337,6 +340,12 @@ class App(tk.Tk):
 
     def toggle_ai(self):
         """The Mode menu. Turning it on without a key asks for one."""
+        if self.busy:
+            # The panes are about to be rebuilt; a worker still holding the old
+            # buttons would re-enable widgets that no longer exist.
+            self.want_ai.set(not self.want_ai.get())
+            self.set_status("Still working. Try the mode again when it finishes.")
+            return
         if self.want_ai.get() and not core.has_key():
             self.ask_for_key()
             self.want_ai.set(core.has_key())
@@ -345,7 +354,8 @@ class App(tk.Tk):
 
     def ask_for_key(self):
         """Take a key, check it against the API, and switch modes if it works."""
-        dialog = KeyDialog(self, current=core.CONFIG["key"])
+        dialog = KeyDialog(self, current=core.CONFIG["key"],
+                           muted=self.colors["muted"])
         if not dialog.result:
             return
         key, persist = dialog.result
@@ -633,7 +643,6 @@ class App(tk.Tk):
                 f"{os.path.basename(target)} already exists.\n\nBuild it again?"):
             return
 
-        self.pending_import = path
         self.busy = True
         self.send.state(["disabled"])
         self.more.state(["disabled"])
@@ -774,19 +783,6 @@ class App(tk.Tk):
         finally:
             db.close()
         return out
-
-    @staticmethod
-    def index_source(path):
-        """The PDF an index was built from, as recorded when it was built."""
-        try:
-            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-            try:
-                row = db.execute("SELECT value FROM meta WHERE key='source'").fetchone()
-            finally:
-                db.close()
-        except sqlite3.Error:
-            return ""
-        return row[0] if row and row[0] else ""
 
     def scan_books(self):
         """Every index we know of: the books folder, plus whatever is open now.

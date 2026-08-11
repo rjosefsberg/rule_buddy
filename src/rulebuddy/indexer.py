@@ -840,10 +840,16 @@ def cmd_export(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Search a bookmarked PDF rulebook.")
-    parser.add_argument("--db", default=DEFAULT_DB, help="index file (default rulebook.db)")
+    parser.add_argument("--db", dest="db_first", default=None,
+                        help=f"index file (default {DEFAULT_DB})")
+    # The same flag on every subcommand, so --db reads naturally on either side
+    # of the command name. Both land in their own dest and are resolved below.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--db", dest="db_last", default=None,
+                        help=f"index file (default {DEFAULT_DB})")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("index", help="build the index from a PDF")
+    p = sub.add_parser("index", help="build the index from a PDF", parents=[common])
     p.add_argument("pdf")
     p.add_argument("--keep-running-heads", action="store_true",
                    help="do not strip repeated page headers and footers")
@@ -853,38 +859,38 @@ def main():
                         'e.g. --skip "chapter one" "chapter two" index credits')
     p.set_defaults(func=lambda a: build(a.pdf, a.db, a.keep_running_heads, a.skip))
 
-    p = sub.add_parser("search", help="keyword search")
+    p = sub.add_parser("search", help="keyword search", parents=[common])
     p.add_argument("words", nargs="+")
     p.add_argument("-n", "--limit", type=int, default=8)
     p.add_argument("-f", "--full", action="store_true", help="print whole chunks")
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("show", help="print one chunk and its cross-references")
+    p = sub.add_parser("show", help="print one chunk and its cross-references", parents=[common])
     p.add_argument("id", type=int)
     p.set_defaults(func=cmd_show)
 
-    p = sub.add_parser("page", help="list sections on a page")
+    p = sub.add_parser("page", help="list sections on a page", parents=[common])
     p.add_argument("number", type=int)
     p.set_defaults(func=cmd_page)
 
-    p = sub.add_parser("refs", help="find sections that cite a rule number")
+    p = sub.add_parser("refs", help="find sections that cite a rule number", parents=[common])
     p.add_argument("number")
     p.set_defaults(func=cmd_refs)
 
-    p = sub.add_parser("toc", help="print the outline")
+    p = sub.add_parser("toc", help="print the outline", parents=[common])
     p.add_argument("-d", "--depth", type=int, default=0)
     p.set_defaults(func=cmd_toc)
 
-    p = sub.add_parser("export", help="dump top hits as JSON for a chat window")
+    p = sub.add_parser("export", help="dump top hits as JSON for a chat window", parents=[common])
     p.add_argument("words", nargs="+")
     p.add_argument("-n", "--limit", type=int, default=6)
     p.set_defaults(func=cmd_export)
 
-    p = sub.add_parser("cover", help="add or replace the cover of an existing index")
+    p = sub.add_parser("cover", help="add or replace the cover of an existing index", parents=[common])
     p.add_argument("pdf")
     p.set_defaults(func=cmd_cover)
 
-    p = sub.add_parser("add", help="add another book to an existing collection")
+    p = sub.add_parser("add", help="add another book to an existing collection", parents=[common])
     p.add_argument("pdf")
     p.add_argument("--title", default=None, help="name for the book (default: the filename)")
     p.add_argument("--keep-running-heads", action="store_true",
@@ -894,14 +900,15 @@ def main():
     p.set_defaults(func=lambda a: add_book(a.pdf, a.db, a.keep_running_heads,
                                            a.skip, title=a.title))
 
-    p = sub.add_parser("books", help="list the books in a collection")
+    p = sub.add_parser("books", help="list the books in a collection", parents=[common])
     p.set_defaults(func=cmd_books)
 
-    p = sub.add_parser("drop", help="remove one book from a collection")
+    p = sub.add_parser("drop", help="remove one book from a collection", parents=[common])
     p.add_argument("book_id", type=int)
     p.set_defaults(func=cmd_drop)
 
     args = parser.parse_args()
+    args.db = args.db_last or args.db_first or DEFAULT_DB
     args.func(args)
 
 

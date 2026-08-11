@@ -50,7 +50,6 @@ def app_dir():
 
 
 DEFAULT_CONFIG = os.path.join(app_dir(), "config.json")
-DEFAULT_BOOKS = os.path.join(app_dir(), "books")
 
 
 def load_config(path=None):
@@ -230,11 +229,6 @@ def collection_name(db):
         return row[0]
     first = db.execute("SELECT title FROM books ORDER BY id LIMIT 1").fetchone()
     return first[0] if first else os.path.splitext(os.path.basename(DB["path"]))[0]
-
-
-def books_in(db):
-    """Every book in a collection, oldest first."""
-    return db.execute("SELECT id, title, source, pages FROM books ORDER BY id").fetchall()
 
 
 # ----------------------------------------------------------------- retrieval

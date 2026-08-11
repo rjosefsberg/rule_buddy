@@ -1,8 +1,8 @@
 RULE BUDDY
 ==========
 
-Ask questions about the rulebook in plain English and get an answer that
-cites the section and page it came from.
+Search your rulebooks, and get written answers that cite the section and
+page they came from.
 
 
 HOW TO START IT
@@ -19,22 +19,43 @@ The first time, Windows may say "Windows protected your PC" because the
 program is not signed. Click "More info", then "Run anyway".
 
 
-HOW TO USE IT
+THE TWO MODES
 -------------
 
-Type a question and press Ask. Answers come back with markers like
-[#412 p.87] -- click one to read the exact excerpt the answer was drawn
-from, so you can check the book yourself.
+Search only
+    Type words from the book and press Search. Matching sections appear
+    on the left; click one to read it on the right. This all happens on
+    your computer, and nothing is sent anywhere.
 
-Questions work best in the book's own words. Try "cover ranged attack"
-rather than "can I shoot someone who is hiding".
+Written answers
+    Type a question and press New question. The answer comes back with
+    markers like [#412 p.87] -- click one to read the exact excerpt the
+    answer was drawn from, so you can check the book yourself.
 
-  New question   starts a fresh thread.
-  Ask more       keeps the current thread and answers using everything
-                 found so far.
+      New question   starts a fresh thread.
+      Ask more       keeps the current thread and answers using
+                     everything found so far.
 
-The book "Exalted Third Edition" is already indexed and loaded. You do
-not need the PDF.
+Which one you get depends on whether an API key is set. If this drive
+came with one, written answers are already on. You can turn them off any
+time under the Mode menu, and searching still works.
+
+Either way, questions work best in the book's own words. Try "cover
+ranged attack" rather than "can I shoot someone who is hiding".
+
+
+YOUR BOOKS
+----------
+
+The books are already indexed and loaded. You do not need the PDFs.
+
+The panel on the left lists them. Click one to switch to it. A collection
+holding several books can be expanded to see what is inside. Ctrl+B hides
+the panel and brings it back.
+
+Right-clicking a book there offers to rename it, add another PDF to the
+collection, rebuild it, or delete it. You only need those if you are
+adding books of your own.
 
 
 IF SOMETHING GOES WRONG
@@ -44,22 +65,25 @@ IF SOMETHING GOES WRONG
     The books folder, with the .db index inside it, must sit next to
     Rule Buddy.exe. Copy the whole folder again, all of it together.
 
-"The API returned 401" or "no API key"
-    The key in config.json has stopped working. Ask whoever gave you this drive for a new one.
-    You can still search and read sections without it; you just will not
-    get written answers.
+"The API returned 401" or "That key did not work"
+    The key has stopped working. Ask whoever gave you this drive for a
+    new one, and put it in under File -> Set API key. Searching still
+    works without it; you just will not get written answers.
 
 "The request failed"
     No internet connection, or the connection dropped. Try again.
+    Searching does not need the internet, only written answers do.
 
 Nothing happens when I double-click
     Make sure you copied the whole "Rule Buddy" folder, including the
-    "_internal" folder next to the exe. The program will not start without it.
+    "_internal" folder next to the exe. The program will not start
+    without it.
 
 
 A NOTE ON THE KEY
 -----------------
 
-config.json in the program folder holds an Anthropic API key that pays
-for the written answers. Please do not share the folder or the key with
-anyone else, and let whoever gave you the drive know when you are done with it.
+If a key came with this drive, it is in config.json in the program
+folder, in plain text, and it pays for the written answers. Please do not
+share the folder or the key with anyone else, and let whoever gave you
+the drive know when you are done with it.
