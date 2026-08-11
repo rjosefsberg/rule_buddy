@@ -56,7 +56,7 @@ folder holding the exe when packaged — and is read at startup:
 {
   "api_key": "sk-ant-...",
   "model": "claude-sonnet-5",
-  "db": "books/rulebook.db",
+  "db": "books/yourbook.db",
   "books_dir": "books"
 }
 ```

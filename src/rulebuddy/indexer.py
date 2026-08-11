@@ -559,8 +559,11 @@ def build(pdf_path, db_path, keep_heads=False, skip=(), progress=None):
     if matched:
         db.execute("INSERT INTO meta VALUES ('skipped',?)", ("; ".join(matched),))
     db.commit()
+    db.close()          # callers may want to move or replace the file straight after
+    pages = doc.page_count
+    doc.close()
     print(f"Indexed {len(entries)} sections into {len(rows)} chunks from "
-          f"{doc.page_count} pages -> {db_path}")
+          f"{pages} pages -> {db_path}")
 
 
 # -------------------------------------------------------------------- queries

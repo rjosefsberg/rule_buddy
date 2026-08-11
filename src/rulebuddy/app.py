@@ -57,6 +57,10 @@ class App(tk.Tk):
         self.history = []
         self.pending = ""
         self.pending_import = None
+        self.pending_swap = None
+        # Indexes opened from outside the books folder, kept for this session so
+        # they do not vanish from the list when another book is opened.
+        self.extra_books = []
         self.sources = {}
         self.terms = []
         self.inbox = queue.Queue()
@@ -201,11 +205,23 @@ class App(tk.Tk):
                                       style="Books.Treeview")
         self.book_list.column("#0", width=SIDEBAR_WIDTH - 20, stretch=True)
         self.book_list.bind("<<TreeviewSelect>>", self.on_pick_book)
+
+        self.menu_target = None
+        self.book_menu = tk.Menu(self, tearoff=0)
+        self.book_menu.add_command(label="Reimport from PDF…", command=self.reimport_book)
+        self.book_menu.add_separator()
+        self.book_menu.add_command(label="Delete book…", command=self.delete_book)
+        # Button-3 everywhere, and Button-2 as well for a one button Mac mouse.
+        self.book_list.bind("<Button-3>", self.post_book_menu)
+        if sys.platform == "darwin":
+            self.book_list.bind("<Button-2>", self.post_book_menu)
+            self.book_list.bind("<Control-Button-1>", self.post_book_menu)
         self.side_empty = ttk.Label(self.side_body, wraplength=SIDEBAR_WIDTH - 40,
                                     justify="left", foreground=self.colors["muted"],
                                     font=f["small"],
-                                    text="Only one book. Put more .db indexes in the "
-                                         "books folder, or use File → Open index.")
+                                    text="No books yet.\n\nUse File → Import rulebook… "
+                                         "to index a PDF, or put a .db index in the "
+                                         "books folder.")
         self.side_empty.pack(anchor="nw")
 
         self.rail = ttk.Frame(self, width=RAIL_WIDTH)
@@ -413,7 +429,16 @@ class App(tk.Tk):
                 f"The limit is {MAX_IMPORT_BYTES // 1_000_000} MB.")
             return
 
-        target = os.path.splitext(path)[0] + ".db"
+        # The index belongs on the shelf, not beside the PDF, or it drops out of
+        # the sidebar the moment another book is opened.
+        shelf = self.books_dir()
+        try:
+            os.makedirs(shelf, exist_ok=True)
+        except OSError as err:
+            messagebox.showerror("Cannot import", f"{shelf}\n\n{err}")
+            return
+        stem = os.path.splitext(os.path.basename(path))[0]
+        target = os.path.join(shelf, stem + ".db")
         if os.path.exists(target) and not messagebox.askyesno(
                 "Replace that index?",
                 f"{os.path.basename(target)} already exists.\n\nBuild it again?"):
@@ -447,6 +472,20 @@ class App(tk.Tk):
             self.inbox.put(("indexed", target))
 
     def finish_import(self, target):
+        swap = getattr(self, "pending_swap", None)
+        if swap and os.path.abspath(swap[0]) == os.path.abspath(target):
+            scratch, final = swap
+            self.pending_swap = None
+            if self.db is not None and (os.path.abspath(final)
+                                        == os.path.abspath(core.DB["path"])):
+                self.db.close()             # release the file we are about to replace
+                self.db = None
+            try:
+                os.replace(scratch, final)
+            except OSError as err:
+                self.import_failed(f"Could not replace {os.path.basename(final)}: {err}")
+                return
+            target = final
         try:
             self.use_index(target)
         except SystemExit as err:
@@ -462,6 +501,13 @@ class App(tk.Tk):
                             "The window is now searching this book.")
 
     def import_failed(self, detail):
+        swap = getattr(self, "pending_swap", None)
+        if swap:                             # a half-built index helps nobody
+            self.pending_swap = None
+            try:
+                os.remove(swap[0])
+            except OSError:
+                pass
         if self.db is None:                  # put the old index back
             try:
                 self.db = core.connect()
@@ -507,6 +553,19 @@ class App(tk.Tk):
         return full.subsample(step, step) if step > 1 else full
 
     @staticmethod
+    def index_source(path):
+        """The PDF an index was built from, as recorded when it was built."""
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                row = db.execute("SELECT value FROM meta WHERE key='source'").fetchone()
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return ""
+        return row[0] if row and row[0] else ""
+
+    @staticmethod
     def index_label(path):
         """The name to show for an index: the book it was built from, if it says."""
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -535,11 +594,24 @@ class App(tk.Tk):
                 if name.lower().endswith(".db"):
                     full = os.path.abspath(os.path.join(directory, name))
                     found[os.path.normcase(full)] = full
+        for extra in getattr(self, "extra_books", []):
+            if os.path.exists(extra):
+                found.setdefault(os.path.normcase(extra), extra)
         current = os.path.abspath(core.DB["path"])
         found.setdefault(os.path.normcase(current), current)
         books = [{"path": p, "label": self.index_label(p)} for p in found.values()]
         books.sort(key=lambda b: b["label"].lower())
         return books
+
+    def remember_book(self, path):
+        """Keep hold of an index that lives outside the books folder."""
+        full = os.path.abspath(path)
+        shelf = os.path.normcase(self.books_dir())
+        if os.path.normcase(os.path.dirname(full)) == shelf:
+            return                          # already on the shelf, it will be found
+        if not any(os.path.normcase(p) == os.path.normcase(full)
+                   for p in self.extra_books):
+            self.extra_books.append(full)
 
     def refresh_books(self):
         """Rebuild the sidebar list and highlight whichever book is open."""
@@ -558,13 +630,124 @@ class App(tk.Tk):
             if os.path.normcase(book["path"]) == current:
                 self.book_list.selection_set(node)
                 self.book_list.see(node)
-        # The placeholder only earns its space when there is nothing to list.
-        if len(self.books) > 1:
+        # Any books at all, list them. The message is for an empty shelf.
+        if self.books:
             self.side_empty.pack_forget()
             self.book_list.pack(fill=tk.BOTH, expand=True)
         else:
             self.book_list.pack_forget()
             self.side_empty.pack(anchor="nw")
+
+    def post_book_menu(self, event):
+        """Right click acts on the row under the pointer without selecting it.
+
+        Selecting would switch books, which is not what a right click means.
+        """
+        row = self.book_list.identify_row(event.y)
+        if not row:
+            return
+        self.menu_target = row
+        try:
+            self.book_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.book_menu.grab_release()
+
+    def reimport_book(self):
+        """Build a book's index again from the PDF it came from."""
+        if self.menu_target is None:
+            return
+        book = self.books[int(self.menu_target)]
+        if self.busy:
+            self.set_status("Still answering. Try again when it finishes.")
+            return
+        if indexer is None:
+            messagebox.showerror("Cannot reimport",
+                                 "PyMuPDF is missing, so PDFs cannot be indexed.")
+            return
+
+        pdf = self.index_source(book["path"])
+        if not pdf or not os.path.exists(pdf):
+            # The book moved, or was indexed on another machine. Ask for it.
+            where = f"\n\nIt was built from:\n{pdf}" if pdf else ""
+            if not messagebox.askyesno(
+                    "Where is the PDF?",
+                    f"The PDF behind {book['label']} is not where the index says."
+                    f"{where}\n\nPick it now?"):
+                return
+            pdf = filedialog.askopenfilename(
+                title=f"PDF for {book['label']}",
+                filetypes=[("PDF rulebook", "*.pdf"), ("PDF rulebook", "*.PDF")])
+            if not pdf:
+                return
+            if os.path.splitext(pdf)[1].lower() != ".pdf":
+                messagebox.showerror("Not a PDF", "Only PDF rulebooks can be indexed.")
+                return
+
+        if not messagebox.askyesno(
+                "Reimport this book?",
+                f"Build the index for {book['label']} again from:\n"
+                f"{os.path.basename(pdf)}\n\n"
+                "The current index is replaced, and the conversation is cleared."):
+            return
+
+        self.pending_import = pdf
+        self.busy = True
+        self.send.state(["disabled"])
+        self.more.state(["disabled"])
+        # Windows will not let the file be replaced while we hold it open.
+        if os.path.abspath(book["path"]) == os.path.abspath(core.DB["path"]):
+            self.db.close()
+            self.db = None
+        # build() clears its target before it starts, so a reimport that fails
+        # partway would take the working index with it. Build beside it instead
+        # and swap only once the new one is whole.
+        scratch = book["path"] + ".rebuilding"
+        self.pending_swap = (scratch, book["path"])
+        self.set_status(f"Indexing {os.path.basename(pdf)}…")
+        threading.Thread(target=self.index_work, args=(pdf, scratch),
+                         daemon=True).start()
+
+    def delete_book(self):
+        """Remove a book's index file, after asking."""
+        if self.menu_target is None:
+            return
+        book = self.books[int(self.menu_target)]
+        open_now = (os.path.normcase(book["path"])
+                    == os.path.normcase(os.path.abspath(core.DB["path"])))
+        others = [b for b in self.books if b["path"] != book["path"]]
+
+        if open_now and not others:
+            messagebox.showinfo(
+                "Cannot delete",
+                f"{book['label']} is the only book. Add another before deleting "
+                "this one, or the window would have nothing to search.")
+            return
+        if self.busy:
+            self.set_status("Still answering. Try again when it finishes.")
+            return
+        if not messagebox.askyesno(
+                "Delete this book?",
+                f"Delete the index for {book['label']}?\n\n{book['path']}\n\n"
+                "This erases the file for good. The PDF it was built from is not "
+                "touched, so the book can be indexed again.",
+                icon="warning", default="no"):
+            return
+
+        # Windows will not unlink a file SQLite still holds open, so move off the
+        # book first and let use_index close the old connection.
+        if open_now:
+            try:
+                self.use_index(others[0]["path"])
+            except SystemExit as err:
+                messagebox.showerror("Cannot delete", str(err))
+                return
+        try:
+            os.remove(book["path"])
+        except OSError as err:
+            messagebox.showerror("Cannot delete", f"{book['path']}\n\n{err}")
+        else:
+            self.set_status(f"Deleted {book['label']}.")
+        self.refresh_books()
 
     def on_pick_book(self, _event=None):
         picked = self.book_list.selection()
@@ -586,7 +769,11 @@ class App(tk.Tk):
     def use_index(self, path):
         """Point the window at an index file and refresh everything it feeds."""
         core.DB["path"] = path
+        previous = getattr(self, "db", None)
         self.db = core.connect()
+        if previous is not None:
+            previous.close()   # or Windows keeps a lock on the file we just left
+        self.remember_book(path)
         self.outline = self.load_outline()
         self.clear()
         self.title(self.book_name())
