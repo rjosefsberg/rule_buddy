@@ -52,20 +52,46 @@ def page_lines(page):
     return out
 
 
-def columns_of(lines, width):
-    """Split lines into columns. A contents page is often set in two.
+def number_columns(lines, width):
+    """Where the page numbers run, as one x per column, left to right.
 
-    Sorting by y alone interleaves the columns and pairs a title with the wrong
-    number, so the column has to be decided before anything else.
+    A contents page prints its numbers in straight vertical lines. Those lines
+    say how many columns the page has, and where each one ends. Splitting at the
+    middle of the page instead cuts through a column whenever there are three,
+    which puts a title in one half and its number in the other.
     """
+    xs = sorted(line[0] for line in lines if BARE_NUMBER.fullmatch(line[4]))
+    if not xs:
+        return []
+    gap = max(8.0, width * 0.04)
+    runs = []
+    for x in xs:
+        if not runs or x - runs[-1][-1] > gap:
+            runs.append([x])
+        else:
+            runs[-1].append(x)
+    # A real column carries many numbers. A stray digit in the artwork does not.
+    return [sum(run) / len(run) for run in runs if len(run) >= 3]
+
+
+def columns_of(lines, width):
+    """Split lines into columns, so a title stays with its own page number."""
     if not lines:
         return []
-    # A single column page has no line starting past the middle.
-    if not any(x0 > width * 0.5 for x0, *_ in lines):
+    marks = number_columns(lines, width)
+    if len(marks) < 2:
         return [lines]
-    left = [line for line in lines if line[0] < width * 0.5]
-    right = [line for line in lines if line[0] >= width * 0.5]
-    return [left, right]
+
+    slack = max(8.0, width * 0.04)
+    groups = [[] for _ in marks]
+    for line in lines:
+        # A line belongs to the first column whose number line is at or to the
+        # right of it. The slack covers a number that starts a shade late.
+        for i, mark in enumerate(marks):
+            if line[0] <= mark + slack:
+                groups[i].append(line)
+                break
+    return [group for group in groups if group]
 
 
 def rows_of(lines):
@@ -89,6 +115,7 @@ def entries_from_rows(rows):
     number of its own. Such a row belongs to the entry above it.
     """
     entries = []
+    pending = []          # wrapped lines waiting for the row that holds the number
     for y, items in rows:
         numbers = [i for i in items if BARE_NUMBER.fullmatch(i[4])]
         titles = [i for i in items if not BARE_NUMBER.fullmatch(i[4])]
@@ -98,19 +125,41 @@ def entries_from_rows(rows):
         # either the number or a dot leader read as characters.
         x0, y0, height, size, text = titles[0]
         text = clean_title(text)
-        if not text:
-            continue
-        if not plausible_title(text):
+        if not text or not plausible_title(text):
             continue
         if not numbers:
-            if entries:
-                entries[-1]["title"] = f"{entries[-1]['title']} {text}".strip()
+            # A title too long for one line wraps, and the page number is
+            # printed against the last line of it. So a row with no number
+            # opens the next entry rather than closing the one before it.
+            pending.append((text, x0, y0, height, size))
             continue
+
+        if pending:
+            pending = [p for p in pending if wraps_into(p, y0, height, size)]
+        if pending:
+            x0, y0, height, size = pending[0][1:]
+            text = " ".join([part[0] for part in pending] + [text])
+        pending = []
         entries.append({"title": text, "printed": int(numbers[-1][4]),
                         "x": round(x0, 1), "y": round(y0, 1),
                         "number_x": round(numbers[-1][0], 1),
                         "height": round(height, 1), "size": round(size, 1)})
     return in_number_column(entries)
+
+
+def wraps_into(pending, y0, height, size):
+    """True when a numberless line is the first half of the entry below it.
+
+    The rest of a wrapped title sits on the very next line, in the same type.
+    A page heading such as "Table of Contents" sits further up and is set
+    larger, so it belongs to neither entry.
+    """
+    _, _, pending_y, pending_height, pending_size = pending
+    if y0 - pending_y > max(28.0, 2.5 * max(height, pending_height)):
+        return False
+    if size > 0 and pending_size > size * 1.4:
+        return False
+    return True
 
 
 def plausible_title(text):

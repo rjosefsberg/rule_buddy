@@ -10,7 +10,9 @@ it does not require the PDF to be one of yours.
 """
 
 import os
+import re
 import tkinter as tk
+import unicodedata
 from tkinter import filedialog, messagebox, ttk
 
 try:
@@ -26,6 +28,17 @@ from . import contents
 MAX_LEVEL = 4
 
 
+def flatten(title):
+    """One line, no matter what the file holds.
+
+    Bookmarks built from a printed contents page often keep the line break the
+    typesetter used, so a title arrives with a line feed inside it. A row of a
+    list shows one line, and everything after the break disappears.
+    """
+    title = unicodedata.normalize("NFKC", title or "")
+    return re.sub(r"\s+", " ", title).strip()
+
+
 class BookmarkEditor(tk.Toplevel):
     """Edit one PDF's bookmarks. Everything happens in this window."""
 
@@ -38,6 +51,10 @@ class BookmarkEditor(tk.Toplevel):
         self.on_index = on_index           # called with a path when indexing
         self.entries = []                  # {level, title, page} with page 0 based
         self.page_count = 0
+        # A reader shows the page label, not the sequence number, so the editor
+        # has to speak the same language or every row looks off by one.
+        self.labels = {}                   # index -> printed label
+        self.by_label = {}                 # printed label -> index
         self.path = tk.StringVar(value=path or "")
         self.pages = tk.StringVar()
         self.also_index = tk.BooleanVar(value=False)
@@ -77,13 +94,14 @@ class BookmarkEditor(tk.Toplevel):
                                  selectmode="browse")
         self.tree.heading("#0", text="Title")
         self.tree.heading("page", text="Page")
-        self.tree.column("#0", width=560, stretch=True)
+        self.tree.column("#0", width=720, stretch=True)
         self.tree.column("page", width=70, stretch=False, anchor="e")
         bar = ttk.Scrollbar(holder, command=self.tree.yview)
         self.tree.configure(yscrollcommand=bar.set)
         bar.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree.bind("<Double-1>", lambda e: self.rename())
+        self.tree.bind("<<TreeviewSelect>>", self.show_full_title)
 
         tools = ttk.Frame(middle, padding=(0, 8))
         tools.pack(fill=tk.X)
@@ -135,9 +153,11 @@ class BookmarkEditor(tk.Toplevel):
             return
         self.page_count = doc.page_count
         existing = doc.get_toc()
+        self.read_labels(doc)
         doc.close()
         if existing:
-            self.entries = [{"level": level, "title": title, "page": page - 1}
+            self.entries = [{"level": level, "title": flatten(title),
+                             "page": page - 1}
                             for level, title, page in existing]
             self.show()
             self.say(f"{os.path.basename(path)}: {self.page_count} pages, "
@@ -147,6 +167,29 @@ class BookmarkEditor(tk.Toplevel):
             self.show()
             self.say(f"{os.path.basename(path)}: {self.page_count} pages, "
                      "no bookmarks. Give the contents page numbers and press Read.")
+
+    def read_labels(self, doc):
+        """Remember what each page is called, so the editor agrees with a reader."""
+        self.labels, self.by_label = {}, {}
+        for index in range(doc.page_count):
+            try:
+                label = doc[index].get_label()
+            except Exception:
+                label = ""
+            if label:
+                self.labels[index] = label
+                self.by_label.setdefault(label, index)
+
+    def page_name(self, index):
+        """What a reader calls this page."""
+        return self.labels.get(index, str(index + 1))
+
+    def show_full_title(self, _event=None):
+        """A long title does not fit the column, so put it in the status line."""
+        i = self.chosen()
+        if i is not None:
+            entry = self.entries[i]
+            self.say(f"page {self.page_name(entry['page'])}  ·  {entry['title']}")
 
     def read_toc(self):
         if self.path.get():
@@ -192,7 +235,7 @@ class BookmarkEditor(tk.Toplevel):
             indent = "    " * (entry["level"] - 1)
             self.tree.insert("", "end", iid=str(i),
                              text=f"{indent}{entry['title']}",
-                             values=(entry["page"] + 1,))
+                             values=(self.page_name(entry["page"]),))
         self.header.configure(
             text=f"Outline: {len(self.entries)} entries" if self.entries
             else "No outline loaded")
@@ -213,7 +256,7 @@ class BookmarkEditor(tk.Toplevel):
             return
         name = ask_line(self, "Rename", "Title:", self.entries[i]["title"])
         if name:
-            self.entries[i]["title"] = name
+            self.entries[i]["title"] = flatten(name)
             self.show(select=i)
 
     def shift_level(self, step):
@@ -230,19 +273,22 @@ class BookmarkEditor(tk.Toplevel):
         i = self.chosen()
         if i is None:
             return
-        value = ask_line(self, "Set page", f"Page, 1 to {self.page_count}:",
-                         str(self.entries[i]["page"] + 1))
+        value = ask_line(self, "Set page", "Page, as your reader shows it:",
+                         self.page_name(self.entries[i]["page"]))
         if not value:
             return
-        try:
-            page = int(value)
-        except ValueError:
-            self.say("A page must be a number.")
-            return
-        if not 1 <= page <= max(1, self.page_count):
-            self.say(f"That PDF has {self.page_count} pages.")
-            return
-        self.entries[i]["page"] = page - 1
+        if value in self.by_label:
+            self.entries[i]["page"] = self.by_label[value]
+        else:
+            try:
+                page = int(value)
+            except ValueError:
+                self.say(f"No page called {value} in this PDF.")
+                return
+            if not 1 <= page <= max(1, self.page_count):
+                self.say(f"That PDF has {self.page_count} pages.")
+                return
+            self.entries[i]["page"] = page - 1
         self.show(select=i)
 
     def add_entry(self):
@@ -279,7 +325,8 @@ class BookmarkEditor(tk.Toplevel):
                 "The file is changed in place.", parent=self):
             return
 
-        toc = [[e["level"], e["title"], e["page"] + 1] for e in self.entries]
+        toc = [[e["level"], flatten(e["title"]), e["page"] + 1]
+               for e in self.entries]
         try:
             doc = pymupdf.open(path)
             doc.set_toc(toc)
