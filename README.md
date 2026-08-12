@@ -191,10 +191,42 @@ rule_buddy/
     app.py                 the Tk window
     core.py                retrieval and the API call
     indexer.py             PDF extraction, chunking, index building, the CLI
+    contents.py            reads an outline from a printed contents page
+    bookmarks.py           the Bookmark Editor window
     assets/rulebuddy.ico
 ```
 
 Indexes, source PDFs, build output, and the real `config.json` are gitignored.
+
+## Bookmarks
+
+The indexer splits a book along its PDF bookmarks. Most rulebooks ship with
+none, and the printed table of contents holds the same information.
+
+**Tools → Bookmark Editor** opens any PDF, indexed or not. It shows the
+bookmarks the file already carries, or builds them from the contents page when
+you give the page numbers. Titles, levels, pages and entries can all be edited,
+and the result is written back into the PDF with an incremental save, so a file
+of several hundred megabytes gains kilobytes rather than being rebuilt. A
+checkbox indexes the book afterwards. Right-clicking a book in the sidebar opens
+the same window on that book's PDF.
+
+The parser reads the columns from the page numbers, which print in straight
+vertical lines, so pages set in one, two or three columns all work. Levels come
+from the indent, counted rather than chained, because indents wobble and a
+decorated page adds strays. A title too long for its line wraps, and these books
+print the page number against the last line, so a row with no number opens the
+next entry rather than closing the one before it.
+
+Page numbers become page indexes through the PDF page labels when the file
+carries them. A reader shows those labels, which is why the editor shows them
+too. Without labels, the printed number is taken as the index.
+
+The same work is available without the window:
+
+```sh
+python -m rulebuddy.contents book.pdf --pages 4 5 6 --out outline.json
+```
 
 ## Collections
 

@@ -41,11 +41,6 @@ INTRO = ("Answers cite the section and page. Click a citation to read the excerp
          "rather than \"can I shoot someone hiding\".\n\n"
          "New question starts a fresh thread. Ask more keeps the current one, and "
          "answers over everything it has found so far.\n")
-SEARCH_INTRO = ("Type words from the book and press Search.\n\n"
-                "Matching sections appear on the left. Pick one to read it here.\n\n"
-                "This is searching your books on this machine. Nothing is sent "
-                "anywhere. Add an API key to get written answers that cite what "
-                "they used.\n")
 
 
 class KeyDialog(tk.Toplevel):
@@ -716,6 +711,35 @@ class App(tk.Tk):
             self.clipboard_append(last[-1])
             self.set_status("Answer copied.")
 
+    def ask_for_pdf(self, title, check_size=True):
+        """Ask for a PDF and check it. Returns a path, or None.
+
+        The dialog filters by extension, but a typed name slips past it, and a
+        file can be unreadable or larger than the indexer will take.
+        """
+        path = filedialog.askopenfilename(
+            title=title, filetypes=[("PDF rulebook", "*.pdf"),
+                                    ("PDF rulebook", "*.PDF")])
+        if not path:
+            return None
+        if os.path.splitext(path)[1].lower() != ".pdf":
+            messagebox.showerror("Not a PDF", "Only PDF rulebooks can be indexed.")
+            return None
+        if not check_size:
+            return path
+        try:
+            size = os.path.getsize(path)
+        except OSError as err:
+            messagebox.showerror("Cannot read that file", str(err))
+            return None
+        if size > MAX_IMPORT_BYTES:
+            messagebox.showerror(
+                "That file is too large",
+                f"{os.path.basename(path)} is {size / 1_000_000:.0f} MB.\n"
+                f"The limit is {MAX_IMPORT_BYTES // 1_000_000} MB.")
+            return None
+        return path
+
     def open_bookmarks(self, path=""):
         """Open the Bookmark Editor. Empty unless a caller names a PDF.
 
@@ -752,29 +776,9 @@ class App(tk.Tk):
             messagebox.showerror("Cannot import",
                                  "PyMuPDF is missing, so PDFs cannot be indexed.")
             return
-        path = filedialog.askopenfilename(
-            title="Import a rulebook",
-            filetypes=[("PDF rulebook", "*.pdf"), ("PDF rulebook", "*.PDF")])
-        if not path:
-            return
-
-        # The dialog filters by extension, but a typed name can slip past it.
-        if os.path.splitext(path)[1].lower() != ".pdf":
-            messagebox.showerror("Not a PDF",
-                                 "Only PDF rulebooks can be imported.")
-            return
-        try:
-            size = os.path.getsize(path)
-        except OSError as err:
-            messagebox.showerror("Cannot read that file", str(err))
-            return
-        if size > MAX_IMPORT_BYTES:
-            messagebox.showerror(
-                "That file is too large",
-                f"{os.path.basename(path)} is {size / 1_000_000:.0f} MB.\n"
-                f"The limit is {MAX_IMPORT_BYTES // 1_000_000} MB.")
-            return
-        self.index_pdf(path)
+        path = self.ask_for_pdf("Import a rulebook")
+        if path:
+            self.index_pdf(path)
 
     def index_pdf(self, path):
         """Index a PDF into the books folder.
@@ -1158,24 +1162,8 @@ class App(tk.Tk):
             messagebox.showerror("Cannot add",
                                  "PyMuPDF is missing, so PDFs cannot be indexed.")
             return
-        pdf = filedialog.askopenfilename(
-            title=f"Add a book to {collection['label']}",
-            filetypes=[("PDF rulebook", "*.pdf"), ("PDF rulebook", "*.PDF")])
+        pdf = self.ask_for_pdf(f"Add a book to {collection['label']}")
         if not pdf:
-            return
-        if os.path.splitext(pdf)[1].lower() != ".pdf":
-            messagebox.showerror("Not a PDF", "Only PDF rulebooks can be indexed.")
-            return
-        try:
-            size = os.path.getsize(pdf)
-        except OSError as err:
-            messagebox.showerror("Cannot read that file", str(err))
-            return
-        if size > MAX_IMPORT_BYTES:
-            messagebox.showerror(
-                "That file is too large",
-                f"{os.path.basename(pdf)} is {size / 1_000_000:.0f} MB.\n"
-                f"The limit is {MAX_IMPORT_BYTES // 1_000_000} MB.")
             return
 
         self.busy = True
@@ -1257,15 +1245,7 @@ class App(tk.Tk):
                 f"The PDF behind {title} is not where the index says.{where}"
                 "\n\nPick it now?"):
             return None
-        pdf = filedialog.askopenfilename(
-            title=f"PDF for {title}",
-            filetypes=[("PDF rulebook", "*.pdf"), ("PDF rulebook", "*.PDF")])
-        if not pdf:
-            return None
-        if os.path.splitext(pdf)[1].lower() != ".pdf":
-            messagebox.showerror("Not a PDF", "Only PDF rulebooks can be indexed.")
-            return None
-        return pdf
+        return self.ask_for_pdf(f"PDF for {title}")
 
     def reimport_book(self):
         """Rebuild from source: one book of a collection, or the whole thing."""

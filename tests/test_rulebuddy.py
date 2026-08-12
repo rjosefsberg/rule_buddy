@@ -19,7 +19,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "src"))
 
-from rulebuddy import core, indexer            # noqa: E402
+from rulebuddy import bookmarks, contents, core, indexer   # noqa: E402
 
 
 def v1_index(path, sections=3):
@@ -235,6 +235,76 @@ class Keys(unittest.TestCase):
                                         path=os.path.join(self.dir, "nope", "config.json"))
         self.assertFalse(ok)
         self.assertIn("Could not write", message)
+
+
+def line(x0, y0, text, size=8.0, height=10.0):
+    """One line as the parser sees it: (x0, y0, height, size, text)."""
+    return (x0, y0, height, size, text)
+
+
+class ContentsPage(unittest.TestCase):
+    """The three faults real books produced, kept from coming back."""
+
+    def test_columns_come_from_the_number_lines(self):
+        """Aeon prints three columns. Splitting at the middle cuts one in half."""
+        lines = []
+        for i in range(4):
+            y = 40.0 + i * 12
+            lines += [line(58.5, y, f"Left {i}"), line(171.5, y, str(10 + i)),
+                      line(196.5, y, f"Middle {i}"), line(309.5, y, str(40 + i)),
+                      line(339.0, y, f"Right {i}"), line(447.5, y, str(80 + i))]
+        self.assertEqual(contents.number_columns(lines, 504), [171.5, 309.5, 447.5])
+        groups = contents.columns_of(lines, 504)
+        self.assertEqual(len(groups), 3)
+        for group in groups:
+            titles = [item for item in group
+                      if not contents.BARE_NUMBER.fullmatch(item[4])]
+            numbers = [item for item in group
+                       if contents.BARE_NUMBER.fullmatch(item[4])]
+            self.assertEqual(len(titles), 4)
+            self.assertEqual(len(numbers), 4, "a column lost its page numbers")
+
+    def test_a_wrapped_title_joins_the_entry_below_it(self):
+        """These books print the number against the last line of a wrapped title."""
+        rows = contents.rows_of([
+            line(58.5, 40, "Glossary"), line(171.5, 40, "20"),
+            line(58.5, 52, "CHAPTER ONE: HISTORY"),
+            line(58.5, 64, "& BACKGROUND"), line(171.5, 64, "24"),
+        ])
+        entries = contents.entries_from_rows(rows)
+        self.assertEqual([e["title"] for e in entries],
+                         ["Glossary", "CHAPTER ONE: HISTORY & BACKGROUND"])
+
+    def test_a_page_heading_does_not_join_the_first_entry(self):
+        """"Table of Contents" sits higher and larger, so it belongs to nobody."""
+        rows = contents.rows_of([
+            line(200.0, 20, "Table of Contents", size=20.0, height=26.0),
+            line(58.5, 90, "Introduction"), line(171.5, 90, "10"),
+        ])
+        entries = contents.entries_from_rows(rows)
+        self.assertEqual([e["title"] for e in entries], ["Introduction"])
+
+    def test_ligatures_are_normalised(self):
+        """A search for "fire" must match a title the book set with one glyph."""
+        self.assertEqual(contents.clean_title("The ﬁrst Fire"), "The first Fire")
+
+    def test_short_titles_survive(self):
+        """Exalted has sections called Sex and War."""
+        self.assertTrue(contents.plausible_title("Sex"))
+        self.assertTrue(contents.plausible_title("War"))
+        self.assertFalse(contents.plausible_title("~~"))
+        self.assertFalse(contents.plausible_title(""))
+
+
+class BookmarkTitles(unittest.TestCase):
+    def test_a_line_feed_inside_a_title_is_removed(self):
+        """39 of Aeon's 567 bookmarks hold one, and a list row shows one line."""
+        self.assertEqual(bookmarks.flatten("Recovery & \nThe Urban Schism"),
+                         "Recovery & The Urban Schism")
+
+    def test_flatten_handles_nothing(self):
+        self.assertEqual(bookmarks.flatten(None), "")
+        self.assertEqual(bookmarks.flatten("   "), "")
 
 
 if __name__ == "__main__":
