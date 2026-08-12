@@ -339,6 +339,8 @@ class App(tk.Tk):
         self.book_menu.add_command(label="Add a book to this collection…",
                                    command=self.add_to_collection)
         self.book_menu.add_command(label="Reimport from PDF…", command=self.reimport_book)
+        self.book_menu.add_command(label="Edit bookmarks…",
+                                   command=self.edit_book_bookmarks)
         self.book_menu.add_separator()
         self.book_menu.add_command(label="Remove this book…", command=self.remove_from_collection)
         self.book_menu.add_command(label="Delete collection…", command=self.delete_book)
@@ -714,17 +716,33 @@ class App(tk.Tk):
             self.clipboard_append(last[-1])
             self.set_status("Answer copied.")
 
-    def open_bookmarks(self):
-        """Open the Bookmark Editor, on the current book's PDF when there is one."""
+    def open_bookmarks(self, path=""):
+        """Open the Bookmark Editor. Empty unless a caller names a PDF.
+
+        From Tools it opens with nothing loaded, because the editor works on any
+        PDF and has no business assuming the open book is the one you meant.
+        """
         from .bookmarks import BookmarkEditor
-        source = ""
-        current = self.read_collection(core.DB["path"])
-        for book in current["books"]:
-            if book["source"] and os.path.exists(book["source"]):
-                source = book["source"]
-                break
-        BookmarkEditor(self, path=source, colors=self.colors,
+        BookmarkEditor(self, path=path, colors=self.colors,
                        on_index=self.index_pdf)
+
+    def edit_book_bookmarks(self):
+        """Open the editor on the PDF behind the book that was right clicked."""
+        collection, book_id = self.target(self.menu_target)
+        if collection is None:
+            return
+        books = collection["books"]
+        if book_id:
+            books = [b for b in books if b["id"] == book_id] or books
+        source = next((b["source"] for b in books
+                       if b["source"] and os.path.exists(b["source"])), "")
+        if not source:
+            recorded = books[0]["source"] if books else ""
+            messagebox.showinfo(
+                "PDF not found",
+                f"The PDF behind {collection['label']} is not where the index "
+                f"says.\n\n{recorded}\n\nOpen it yourself in the editor.")
+        self.open_bookmarks(source)
 
     def import_rulebook(self):
         """Pick a PDF and build an index from it."""
