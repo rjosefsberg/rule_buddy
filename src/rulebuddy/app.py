@@ -30,7 +30,7 @@ except (ImportError, SystemExit):
     indexer = None      # searching still works; importing a new book will not
 
 CITE = re.compile(r"\[#(\d+)[^\]]*?(\d+)\]")
-MAX_IMPORT_BYTES = 100 * 1_000_000
+MAX_IMPORT_BYTES = 250 * 1_000_000
 SIDEBAR_WIDTH = 265
 RAIL_WIDTH = 26
 COVER_HEIGHT = 120      # thumbnail height on the shelf. The indexer stores

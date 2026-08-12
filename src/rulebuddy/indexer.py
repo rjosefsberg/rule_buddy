@@ -74,6 +74,22 @@ def heading_y(page, title, floor):
     return None
 
 
+def require_text(doc, path, sample=12):
+    """Stop early when a PDF is a scan.
+
+    Every page of a scan is a picture. The index would come out empty, and the
+    failure would look like a bug in the splitting rather than a book this
+    program cannot read.
+    """
+    step = max(1, doc.page_count // sample)
+    for page_ix in range(0, doc.page_count, step):
+        if doc[page_ix].get_text().strip():
+            return
+    sys.exit(f"{os.path.basename(path)} holds no text, only pictures.\n"
+             "This is a scanned book. Nothing here can read it, because the "
+             "index is built from text.")
+
+
 def read_outline(doc):
     """Return outline entries with a page and a vertical position."""
     raw = doc.get_toc(simple=True)
@@ -561,6 +577,7 @@ def add_book(pdf_path, db_path, keep_heads=False, skip=(), progress=None, title=
     if progress:
         progress("Reading the outline", 0, 0)
     doc = pymupdf.open(pdf_path)
+    require_text(doc, pdf_path)
     entries = read_outline(doc)
     last_page = doc.page_count - 1
 
