@@ -256,6 +256,10 @@ class App(tk.Tk):
         m_edit.add_command(label="Copy last answer", command=self.copy_answer)
         menu.add_cascade(label="Edit", menu=m_edit)
 
+        m_tools = tk.Menu(menu, tearoff=0)
+        m_tools.add_command(label="Bookmark Editor…", command=self.open_bookmarks)
+        menu.add_cascade(label="Tools", menu=m_tools)
+
         m_mode = tk.Menu(menu, tearoff=0)
         m_mode.add_checkbutton(label="Written answers (AI)", variable=self.want_ai,
                                command=self.toggle_ai)
@@ -710,6 +714,18 @@ class App(tk.Tk):
             self.clipboard_append(last[-1])
             self.set_status("Answer copied.")
 
+    def open_bookmarks(self):
+        """Open the Bookmark Editor, on the current book's PDF when there is one."""
+        from .bookmarks import BookmarkEditor
+        source = ""
+        current = self.read_collection(core.DB["path"])
+        for book in current["books"]:
+            if book["source"] and os.path.exists(book["source"]):
+                source = book["source"]
+                break
+        BookmarkEditor(self, path=source, colors=self.colors,
+                       on_index=self.index_pdf)
+
     def import_rulebook(self):
         """Pick a PDF and build an index from it."""
         if self.busy:
@@ -739,6 +755,21 @@ class App(tk.Tk):
                 "That file is too large",
                 f"{os.path.basename(path)} is {size / 1_000_000:.0f} MB.\n"
                 f"The limit is {MAX_IMPORT_BYTES // 1_000_000} MB.")
+            return
+        self.index_pdf(path)
+
+    def index_pdf(self, path):
+        """Index a PDF into the books folder.
+
+        Import picks the file and checks it, then calls this. The Bookmark
+        Editor calls it directly, since it already holds a path.
+        """
+        if self.busy:
+            self.set_status("Still working. Try again when it finishes.")
+            return
+        if indexer is None:
+            messagebox.showerror("Cannot import",
+                                 "PyMuPDF is missing, so PDFs cannot be indexed.")
             return
 
         # The index belongs on the shelf, not beside the PDF, or it drops out of
