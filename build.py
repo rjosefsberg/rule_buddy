@@ -37,6 +37,10 @@ def build_exe():
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
         "--name", NAME, "--icon", ICON, "--paths", os.path.join(ROOT, "src"),
         "--collect-all", "pymupdf",
+        # The editor is imported inside a method, so the analysis can miss it.
+        # A missing module would only show when a user opens the Tools menu.
+        "--hidden-import", "rulebuddy.bookmarks",
+        "--hidden-import", "rulebuddy.contents",
         "--distpath", os.path.join(WORK, "dist"),
         "--workpath", os.path.join(WORK, "work"),
         "--specpath", WORK,

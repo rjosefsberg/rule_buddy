@@ -13,7 +13,7 @@ import os
 import re
 import tkinter as tk
 import unicodedata
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 try:
     import pymupdf
@@ -47,7 +47,8 @@ class BookmarkEditor(tk.Toplevel):
         self.title("Bookmark Editor")
         self.geometry("900x640")
         self.minsize(640, 420)
-        self.colors = colors or {"muted": "#6B6B6B"}
+        self.colors = dict({"muted": "#6B6B6B", "accent": "#1A4E8A",
+                            "quote": "#F4F5F6"}, **(colors or {}))
         self.on_index = on_index           # called with a path when indexing
         self.entries = []                  # {level, title, page} with page 0 based
         self.page_count = 0
@@ -90,8 +91,10 @@ class BookmarkEditor(tk.Toplevel):
 
         holder = ttk.Frame(middle)
         holder.pack(fill=tk.BOTH, expand=True)
+        self.style_headings()
         self.tree = ttk.Treeview(holder, columns=("page",), show="tree headings",
-                                 selectmode="browse")
+                                 selectmode="extended",
+                                 style="Bookmark.Treeview")
         self.tree.heading("#0", text="Title")
         self.tree.heading("page", text="Page")
         self.tree.column("#0", width=720, stretch=True)
@@ -119,14 +122,39 @@ class BookmarkEditor(tk.Toplevel):
                         text="Index this book after saving").pack(side=tk.LEFT)
         ttk.Button(bottom, text="Close", width=10, command=self.destroy
                    ).pack(side=tk.RIGHT)
-        ttk.Button(bottom, text="Save to PDF", width=14, command=self.save
-                   ).pack(side=tk.RIGHT, padx=(0, 8))
+        self.save_btn = ttk.Button(bottom, text="Save to PDF", width=14,
+                                   command=self.save)
+        self.save_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
         self.status = ttk.Label(self, anchor="w", padding=(12, 4))
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
+    def style_headings(self):
+        """Give Title and Page the accent colour the rest of the app uses."""
+        style = ttk.Style(self)
+        heading = tkfont.nametofont("TkHeadingFont").copy()
+        heading.configure(weight="bold")
+        style.configure("Bookmark.Treeview.Heading",
+                        foreground=self.colors["accent"],
+                        background=self.colors["quote"],
+                        font=heading)
+        # A pressed heading must not fall back to the plain system colour.
+        style.map("Bookmark.Treeview.Heading",
+                  foreground=[("active", self.colors["accent"])],
+                  background=[("active", self.colors["quote"])])
+
     def say(self, message):
         self.status.configure(text=message)
+
+    def busy(self, working, message):
+        """Show a wait, and paint it before the long job blocks the window."""
+        self.say(message)
+        self.save_btn.configure(state="disabled" if working else "normal")
+        try:
+            self.configure(cursor="watch" if working else "")
+        except tk.TclError:
+            pass
+        self.update_idletasks()
 
     # ------------------------------------------------------------- loading
 
@@ -186,9 +214,11 @@ class BookmarkEditor(tk.Toplevel):
 
     def show_full_title(self, _event=None):
         """A long title does not fit the column, so put it in the status line."""
-        i = self.chosen()
-        if i is not None:
-            entry = self.entries[i]
+        picked = self.chosen_many()
+        if len(picked) > 1:
+            self.say(f"{len(picked)} entries selected.")
+        elif picked:
+            entry = self.entries[picked[0]]
             self.say(f"page {self.page_name(entry['page'])}  ·  {entry['title']}")
 
     def read_toc(self):
@@ -240,13 +270,21 @@ class BookmarkEditor(tk.Toplevel):
             text=f"Outline: {len(self.entries)} entries" if self.entries
             else "No outline loaded")
         if select is not None and self.entries:
-            iid = str(min(select, len(self.entries) - 1))
-            self.tree.selection_set(iid)
-            self.tree.see(iid)
+            last = len(self.entries) - 1
+            wanted = [select] if isinstance(select, int) else list(select)
+            iids = [str(min(i, last)) for i in wanted]
+            if iids:
+                self.tree.selection_set(*iids)
+                self.tree.see(iids[0])
 
     def chosen(self):
-        picked = self.tree.selection()
-        return int(picked[0]) if picked else None
+        """The first selected row. The commands that edit one entry use this."""
+        picked = self.chosen_many()
+        return picked[0] if picked else None
+
+    def chosen_many(self):
+        """Every selected row, top of the list first."""
+        return sorted(int(iid) for iid in self.tree.selection())
 
     # -------------------------------------------------------------- editing
 
@@ -260,14 +298,20 @@ class BookmarkEditor(tk.Toplevel):
             self.show(select=i)
 
     def shift_level(self, step):
-        """Move an entry in or out. Its children are not dragged with it."""
-        i = self.chosen()
-        if i is None:
+        """Move the selected entries in or out.
+
+        Children are not dragged with a parent. Rows move from the top down,
+        because the ceiling of a row comes from the row above it, and that row
+        must find its new level first.
+        """
+        picked = self.chosen_many()
+        if not picked:
             return
-        ceiling = 1 if i == 0 else self.entries[i - 1]["level"] + 1
-        level = self.entries[i]["level"] + step
-        self.entries[i]["level"] = max(1, min(level, ceiling, MAX_LEVEL))
-        self.show(select=i)
+        for i in picked:
+            ceiling = 1 if i == 0 else self.entries[i - 1]["level"] + 1
+            level = self.entries[i]["level"] + step
+            self.entries[i]["level"] = max(1, min(level, ceiling, MAX_LEVEL))
+        self.show(select=picked)
 
     def set_page(self):
         i = self.chosen()
@@ -327,6 +371,10 @@ class BookmarkEditor(tk.Toplevel):
 
         toc = [[e["level"], flatten(e["title"]), e["page"] + 1]
                for e in self.entries]
+        # A large book takes seconds to write. The window cannot repaint while
+        # PyMuPDF works, so tell the user before the wait starts, and do not let
+        # a second Save begin. The file is incomplete until the wait ends.
+        self.busy(True, "Saving. Do not open the PDF until this finishes…")
         try:
             doc = pymupdf.open(path)
             doc.set_toc(toc)
@@ -335,11 +383,16 @@ class BookmarkEditor(tk.Toplevel):
             doc.save(path, incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
             doc.close()
         except Exception as err:
+            self.busy(False, "Save failed. The PDF is unchanged.")
             messagebox.showerror("Could not save", f"{type(err).__name__}: {err}",
                                  parent=self)
             return
-        self.say(f"Wrote {len(self.entries)} bookmarks into "
-                 f"{os.path.basename(path)}.")
+        name = os.path.basename(path)
+        self.busy(False, f"Wrote {len(self.entries)} bookmarks into {name}.")
+        messagebox.showinfo(
+            "Saved",
+            f"{len(self.entries)} bookmarks are now in:\n{name}\n\n"
+            "The file is closed. You can open it in your reader.", parent=self)
 
         if self.also_index.get() and self.on_index:
             self.on_index(path)
