@@ -216,6 +216,22 @@ def ensure_schema(db):
     db.commit()
 
 
+# A small-caps font can hold its lowercase letters in a Private Use Area, at the
+# ASCII code plus this offset. The text then carries no letter a reader knows:
+# "Wicked" comes out as "W" and five code points from plane 15. Tk cannot draw a
+# character above the BMP either, so such a title reaches the window as "W".
+PUA_BASE = 0xF0000
+PUA_MAP = {PUA_BASE + code: chr(code) for code in range(0x20, 0x7F)}
+
+
+def unpua(text):
+    """Put Private Use letters back to ASCII, one character for one character.
+
+    The length does not change, so the style codes still line up with the text.
+    """
+    return text.translate(PUA_MAP) if text else text
+
+
 def title_from_path(path):
     """A readable book name from a PDF filename."""
     stem = os.path.splitext(os.path.basename(path or ""))[0]
@@ -257,20 +273,24 @@ def query_terms(question):
     return " OR ".join(parts)
 
 
-def retrieve(db, question, limit=10):
+def retrieve(db, question, limit=25):
     """Find the sections that answer a question, then pull in what they cite."""
     query = query_terms(question)
     if not query:
         return []
     rows = db.execute("""
         SELECT s.id, s.path, s.title, s.number, s.page_start, s.page_end, s.text,
-               s.styles, b.title AS book
+               s.styles, b.title AS book, b.source AS source
         FROM sections_fts f JOIN sections s ON s.id = f.rowid
         LEFT JOIN books b ON b.id = s.book_id
         WHERE sections_fts MATCH ?
         ORDER BY bm25(sections_fts, 4.0, 2.0, 1.0) LIMIT ?""", (query, limit)).fetchall()
 
     found = {r["id"]: dict(r) for r in rows}
+    # The window lists results by page, so the match order has to travel with
+    # the rows. Without it the best match cannot be found again after sorting.
+    for rank, row in enumerate(found.values()):
+        row["rank"] = rank
     for row in list(found.values()):
         row["cited"] = False
         numbers = list(dict.fromkeys(RULE_NUMBER.findall(row["text"])))[:4]
@@ -279,12 +299,13 @@ def retrieve(db, question, limit=10):
                 continue
             for extra in db.execute(
                 "SELECT s.id,s.path,s.title,s.number,s.page_start,s.page_end,s.text,"
-                " s.styles, b.title AS book FROM sections s"
+                " s.styles, b.title AS book, b.source AS source FROM sections s"
                 " LEFT JOIN books b ON b.id = s.book_id"
                 " WHERE s.number=? AND s.part=0 LIMIT 1", (number,)):
                 if extra["id"] not in found:
                     item = dict(extra)
                     item["cited"] = True
+                    item["rank"] = len(found)
                     found[item["id"]] = item
     return list(found.values())[:limit + 6]
 

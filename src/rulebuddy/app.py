@@ -16,10 +16,15 @@ import json
 import os
 import queue
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 import threading
 import tkinter as tk
+import urllib.parse
+import urllib.request
+import webbrowser
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 from . import core
@@ -94,6 +99,78 @@ class KeyDialog(tk.Toplevel):
             return
         self.result = (key, self.save.get())
         self.destroy()
+
+
+def safe_filename(name):
+    """A collection name becomes a file name, so take out what a path forbids."""
+    cleaned = re.sub(r'[<>:"/\\|?*]', " ", name).strip(" .")
+    return " ".join(cleaned.split())[:80] or "Collection"
+
+
+def pdf_viewers():
+    """Readers that take a page on the command line, best first.
+
+    Each item is (name, list of places to look, arguments before the file).
+    The page number is a PDF sequence number, which is what these readers want.
+    """
+    if sys.platform == "win32":
+        program = os.environ.get("ProgramFiles", r"C:\Program Files")
+        x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", "")
+        return [
+            ("SumatraPDF",
+             [os.path.join(local, r"SumatraPDF\SumatraPDF.exe"),
+              os.path.join(program, r"SumatraPDF\SumatraPDF.exe")],
+             lambda page: ["-reuse-instance", "-page", str(page)]),
+            ("Acrobat",
+             [os.path.join(x86, r"Adobe\Acrobat Reader DC\Reader\AcroRd32.exe"),
+              os.path.join(program, r"Adobe\Acrobat DC\Acrobat\Acrobat.exe")],
+             lambda page: ["/A", f"page={page}"]),
+        ]
+    if sys.platform == "darwin":
+        return []                       # Preview takes no page from the shell
+    return [
+        ("Evince", ["evince"], lambda page: [f"--page-index={page}"]),
+        ("Okular", ["okular"], lambda page: ["-p", str(page)]),
+        ("Zathura", ["zathura"], lambda page: ["-P", str(page)]),
+    ]
+
+
+def open_pdf_at(path, page):
+    """Open a PDF at a page. Return the reader used, or None if the page is lost.
+
+    A PDF reader is not required to take a page number, and the system default
+    on Windows never does. So try the readers that do, then a browser, which
+    honours the #page fragment. The last try opens the file at page one.
+    """
+    for name, places, arguments in pdf_viewers():
+        for place in places:
+            exe = place if os.path.isfile(place) else shutil.which(place)
+            if not exe:
+                continue
+            try:
+                subprocess.Popen([exe] + arguments(page) + [path])
+                return name
+            except OSError:
+                break                   # this reader is there but will not run
+
+    url = urllib.parse.urljoin("file:", urllib.request.pathname2url(
+        os.path.abspath(path))) + f"#page={page}"
+    try:
+        if webbrowser.open(url):
+            return "your browser"
+    except webbrowser.Error:
+        pass
+
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(path)
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open",
+                              path])
+    except OSError:
+        pass
+    return None
 
 
 def luminance(widget, color):
@@ -237,6 +314,7 @@ class App(tk.Tk):
         m_file = tk.Menu(menu, tearoff=0)
         m_file.add_command(label="Import rulebook…", accelerator=f"{key}+I",
                            command=self.import_rulebook)
+        m_file.add_command(label="Import folder…", command=self.import_folder)
         m_file.add_command(label="Open index…", accelerator=f"{key}+O", command=self.open_index)
         m_file.add_separator()
         m_file.add_command(label="Set API key…", command=self.ask_for_key)
@@ -559,13 +637,17 @@ class App(tk.Tk):
         head = ttk.Label(parent, text="Sections found", padding=(8, 6))
         head.pack(fill=tk.X)
         self.tree = ttk.Treeview(parent, columns=("page",), show="tree headings",
-                                 height=6)
+                                 height=12)
         self.tree.heading("#0", text="Section")
         self.tree.heading("page", text="Page")
         self.tree.column("#0", width=240, stretch=True)
         self.tree.column("page", width=64, stretch=False, anchor="e")
         self.tree.pack(fill=tk.BOTH, expand=fill, padx=6)
         self.tree.bind("<<TreeviewSelect>>", self.on_pick)
+        self.tree.bind("<Double-1>", lambda e: self.open_at_page())
+        self.open_btn = ttk.Button(parent, text="Open the PDF at this page",
+                                   command=self.open_at_page)
+        self.open_btn.pack(anchor="w", padx=6, pady=(6, 0))
 
     def build_excerpt(self, parent):
         self.excerpt = tk.Text(parent, wrap="word", relief="flat", padx=32, pady=26,
@@ -747,7 +829,7 @@ class App(tk.Tk):
         PDF and has no business assuming the open book is the one you meant.
         """
         from .bookmarks import BookmarkEditor
-        BookmarkEditor(self, path=path, colors=self.colors,
+        BookmarkEditor(self, path=path, colors=self.colors, fonts=self.fonts(),
                        on_index=self.index_pdf)
 
     def edit_book_bookmarks(self):
@@ -779,6 +861,61 @@ class App(tk.Tk):
         path = self.ask_for_pdf("Import a rulebook")
         if path:
             self.index_pdf(path)
+
+    def import_folder(self):
+        """Open the folder importer. It checks the PDFs and calls back."""
+        if indexer is None:
+            messagebox.showerror("Cannot import",
+                                 "PyMuPDF is missing, so PDFs cannot be indexed.")
+            return
+        from .importer import FolderImport
+        FolderImport(self, colors=self.colors, fonts=self.fonts(),
+                     on_index=self.index_collection,
+                     max_bytes=MAX_IMPORT_BYTES)
+
+    def index_collection(self, plan, name):
+        """Build one collection from several PDFs, in the order given."""
+        if self.busy:
+            self.set_status("Still working. Try again when it finishes.")
+            return
+        shelf = self.books_dir()
+        try:
+            os.makedirs(shelf, exist_ok=True)
+        except OSError as err:
+            messagebox.showerror("Cannot import", f"{shelf}\n\n{err}")
+            return
+        target = os.path.join(shelf, safe_filename(name) + ".db")
+        if os.path.exists(target) and not messagebox.askyesno(
+                "Replace that collection?",
+                f"{os.path.basename(target)} already exists.\n\n"
+                "Build it again from these books?"):
+            return
+
+        self.busy = True
+        self.send.state(["disabled"])
+        self.more.state(["disabled"])
+        # Build beside the old file and swap at the end. A collection takes
+        # minutes, and a failure halfway must not leave the shelf short a book.
+        scratch = target + ".building"
+        self.pending_swap = (scratch, target)
+        self.set_status(f"Indexing {len(plan)} books into {name}…")
+        threading.Thread(target=self.collection_work,
+                         args=(plan, name, scratch), daemon=True).start()
+
+    def collection_work(self, plan, name, target):
+        """Build a whole collection off the main thread."""
+        def report(stage, done, total):
+            share = f" {done}/{total}" if total else ""
+            self.inbox.put(("status", f"{stage}{share}"))
+
+        try:
+            indexer.rebuild_collection(target, plan, name=name, progress=report)
+        except SystemExit as err:
+            self.inbox.put(("index_failed", str(err) or "The indexer stopped."))
+        except Exception as err:
+            self.inbox.put(("index_failed", f"{type(err).__name__}: {err}"))
+        else:
+            self.inbox.put(("indexed", target))
 
     def index_pdf(self, path):
         """Index a PDF into the books folder.
@@ -1532,17 +1669,45 @@ class App(tk.Tk):
         for row in self.tree.get_children():
             self.tree.delete(row)
         self.sources = {s["id"]: s for s in found}
-        for src in found:
+        # A reader works through a book front to back, so the list follows the
+        # pages. The best match is still the one the window opens on.
+        in_order = sorted(found, key=lambda s: (s.get("book") or "",
+                                                s["page_start"], s["page_end"]))
+        for src in in_order:
             pages = (str(src["page_start"]) if src["page_start"] == src["page_end"]
                      else f"{src['page_start']}–{src['page_end']}")
             label = src["path"].split(" > ")[-1]
             if src.get("cited"):
                 label += "  (cross-reference)"
             self.tree.insert("", "end", iid=str(src["id"]),
-                             text=f"#{src['id']}  {label}", values=(pages,))
+                             text=label, values=(pages,))
         if found:
-            self.tree.selection_set(str(found[0]["id"]))
-            self.show_excerpt(found[0]["id"])
+            best = min(found, key=lambda s: s.get("rank", 0))
+            self.tree.selection_set(str(best["id"]))
+            self.tree.see(str(best["id"]))
+            self.show_excerpt(best["id"])
+
+    def open_at_page(self):
+        """Open the book's PDF in a reader, at the page of the chosen result."""
+        picked = self.tree.selection()
+        if not picked:
+            self.set_status("Pick a result first.")
+            return
+        src = self.sources.get(int(picked[0]))
+        if not src:
+            return
+        path = self.locate_pdf(src.get("book") or "this book", src.get("source"))
+        if not path:
+            self.set_status("No PDF for that book, so it cannot be opened.")
+            return
+        page = src["page_start"]
+        how = open_pdf_at(path, page)
+        if how:
+            self.set_status(f"Opened {os.path.basename(path)} at page {page} "
+                            f"with {how}.")
+        else:
+            self.set_status(f"Opened {os.path.basename(path)}. "
+                            f"Your reader takes no page, so go to page {page}.")
 
     def on_pick(self, _event):
         picked = self.tree.selection()
@@ -1560,7 +1725,7 @@ class App(tk.Tk):
         self.excerpt.delete("1.0", "end")
         # Name the book: a page number alone is ambiguous across a collection.
         book = f"{src['book']}  ·  " if src.get("book") else ""
-        self.excerpt.insert("end", f"#{src['id']}  {book}{pages}  {src['path']}\n", "head")
+        self.excerpt.insert("end", f"{book}{pages}  {src['path']}\n", "head")
 
         # Paragraphs go in one at a time, so remember where each one landed:
         # the styles column addresses the stored text, not the widget.

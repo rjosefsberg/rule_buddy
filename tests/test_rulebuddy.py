@@ -307,5 +307,26 @@ class BookmarkTitles(unittest.TestCase):
         self.assertEqual(bookmarks.flatten("   "), "")
 
 
+class PrivateUseLetters(unittest.TestCase):
+    """Exigents sets Charm names in a font that hides its small caps in the PUA."""
+
+    def test_small_caps_come_back_as_letters(self):
+        raw = ("W\U000f0069\U000f0063\U000f006b\U000f0065\U000f0064 "
+               "H\U000f0065\U000f0061\U000f0072\U000f0074\U000f0062"
+               "\U000f0072\U000f0065\U000f0061\U000f006b "
+               "E\U000f0070\U000f0069\U000f0070\U000f0068\U000f0061"
+               "\U000f006e\U000f0079")
+        self.assertEqual(core.unpua(raw), "Wicked Heartbreak Epiphany")
+
+    def test_the_length_does_not_change(self):
+        """The style codes address the text by offset, so it must not move."""
+        raw = "T\U000f0061\U000f0073\U000f0074\U000f0065"
+        self.assertEqual(len(core.unpua(raw)), len(raw))
+
+    def test_ordinary_text_is_untouched(self):
+        self.assertEqual(core.unpua("Taste of the Heart"), "Taste of the Heart")
+        self.assertEqual(core.unpua(""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

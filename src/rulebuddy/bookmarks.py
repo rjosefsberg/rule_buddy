@@ -23,7 +23,7 @@ except ImportError:                 # older installs expose the same module as f
     except ImportError:
         pymupdf = None
 
-from . import contents
+from . import contents, core
 
 MAX_LEVEL = 4
 
@@ -35,20 +35,22 @@ def flatten(title):
     typesetter used, so a title arrives with a line feed inside it. A row of a
     list shows one line, and everything after the break disappears.
     """
-    title = unicodedata.normalize("NFKC", title or "")
+    title = unicodedata.normalize("NFKC", core.unpua(title or ""))
     return re.sub(r"\s+", " ", title).strip()
 
 
 class BookmarkEditor(tk.Toplevel):
     """Edit one PDF's bookmarks. Everything happens in this window."""
 
-    def __init__(self, parent, path=None, colors=None, on_index=None):
+    def __init__(self, parent, path=None, colors=None, fonts=None, on_index=None):
         super().__init__(parent)
         self.title("Bookmark Editor")
         self.geometry("900x640")
         self.minsize(640, 420)
         self.colors = dict({"muted": "#6B6B6B", "accent": "#1A4E8A",
-                            "quote": "#F4F5F6"}, **(colors or {}))
+                            "quote": "#F4F5F6", "page": "#FFFFFF",
+                            "ink": "#1A1A1A", "rule": "#D2D6DA"}, **(colors or {}))
+        self.fonts = fonts or self.stock_fonts()
         self.on_index = on_index           # called with a path when indexing
         self.entries = []                  # {level, title, page} with page 0 based
         self.page_count = 0
@@ -86,15 +88,17 @@ class BookmarkEditor(tk.Toplevel):
 
         middle = ttk.Frame(self, padding=(12, 0, 12, 0))
         middle.pack(fill=tk.BOTH, expand=True)
-        self.header = ttk.Label(middle, text="No outline loaded")
-        self.header.pack(anchor="w", pady=(0, 4))
+        self.header = ttk.Label(middle, text="No outline loaded",
+                                font=self.fonts["question"])
+        self.header.pack(anchor="w", pady=(0, 6))
 
         holder = ttk.Frame(middle)
         holder.pack(fill=tk.BOTH, expand=True)
-        self.style_headings()
+        self.style_tree()
         self.tree = ttk.Treeview(holder, columns=("page",), show="tree headings",
                                  selectmode="extended",
                                  style="Bookmark.Treeview")
+        self.tag_tree()
         self.tree.heading("#0", text="Title")
         self.tree.heading("page", text="Page")
         self.tree.column("#0", width=720, stretch=True)
@@ -126,22 +130,62 @@ class BookmarkEditor(tk.Toplevel):
                                    command=self.save)
         self.save_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
-        self.status = ttk.Label(self, anchor="w", padding=(12, 4))
+        self.status = ttk.Label(self, anchor="w", padding=(12, 4),
+                                font=self.fonts["small"],
+                                foreground=self.colors["muted"])
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
-    def style_headings(self):
-        """Give Title and Page the accent colour the rest of the app uses."""
+    def stock_fonts(self):
+        """The app hands its own faces in. Alone, the editor makes plain ones."""
+        size = tkfont.nametofont("TkTextFont").actual("size") or 10
+        family = tkfont.nametofont("TkTextFont").actual("family")
+        return {
+            "body": tkfont.Font(family=family, size=size),
+            "bold": tkfont.Font(family=family, size=size, weight="bold"),
+            "question": tkfont.Font(family=family, size=size + 1, weight="bold"),
+            "small": tkfont.Font(family="Consolas", size=max(9, size - 3)),
+        }
+
+    def style_tree(self):
+        """Paint the list. The list is the window, so it carries the look."""
         style = ttk.Style(self)
-        heading = tkfont.nametofont("TkHeadingFont").copy()
-        heading.configure(weight="bold")
+        f = self.fonts
+        row = f["body"].metrics("linespace") + 10
+        style.configure("Bookmark.Treeview",
+                        font=f["body"],
+                        rowheight=row,
+                        background=self.colors["page"],
+                        fieldbackground=self.colors["page"],
+                        foreground=self.colors["ink"],
+                        borderwidth=0)
+        # The system selection blue fights the accent, so use the accent.
+        style.map("Bookmark.Treeview",
+                  background=[("selected", self.colors["accent"])],
+                  foreground=[("selected", self.colors["page"])])
         style.configure("Bookmark.Treeview.Heading",
+                        font=f["bold"],
                         foreground=self.colors["accent"],
-                        background=self.colors["quote"],
-                        font=heading)
+                        background=self.colors["quote"])
         # A pressed heading must not fall back to the plain system colour.
         style.map("Bookmark.Treeview.Heading",
                   foreground=[("active", self.colors["accent"])],
                   background=[("active", self.colors["quote"])])
+
+    def tag_tree(self):
+        """One tag for each level, and one for the tint on other rows.
+
+        Four spaces of indent do not tell a chapter from a footnote. Weight and
+        colour do, and they still read when the title is long.
+        """
+        f = self.fonts
+        self.tree.tag_configure("stripe", background=self.colors["quote"])
+        self.tree.tag_configure("level1", font=f["bold"],
+                                foreground=self.colors["ink"])
+        self.tree.tag_configure("level2", font=f["body"],
+                                foreground=self.colors["ink"])
+        for name in ("level3", "level4"):
+            self.tree.tag_configure(name, font=f["body"],
+                                    foreground=self.colors["muted"])
 
     def say(self, message):
         self.status.configure(text=message)
@@ -262,10 +306,15 @@ class BookmarkEditor(tk.Toplevel):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for i, entry in enumerate(self.entries):
-            indent = "    " * (entry["level"] - 1)
+            level = max(1, min(entry["level"], MAX_LEVEL))
+            indent = "    " * (level - 1)
+            tags = [f"level{level}"]
+            if i % 2:
+                tags.append("stripe")
             self.tree.insert("", "end", iid=str(i),
                              text=f"{indent}{entry['title']}",
-                             values=(self.page_name(entry["page"]),))
+                             values=(self.page_name(entry["page"]),),
+                             tags=tuple(tags))
         self.header.configure(
             text=f"Outline: {len(self.entries)} entries" if self.entries
             else "No outline loaded")

@@ -25,6 +25,15 @@ def complain(message):
     sys.exit(1)
 
 
+def first_index(shelf):
+    """Any index on the shelf, by name. Returns a full path, or None."""
+    try:
+        names = sorted(n for n in os.listdir(shelf) if n.lower().endswith(".db"))
+    except OSError:
+        return None
+    return os.path.join(shelf, names[0]) if names else None
+
+
 def main():
     from . import core
 
@@ -38,8 +47,15 @@ def main():
     core.DB["path"] = db
 
     if not os.path.exists(db):
-        complain(f"The rulebook index is missing.\n\nExpected it here:\n{db}\n\n"
-                 "Copy the whole Rule Buddy folder off the drive and try again.")
+        # The recorded index can be deleted, renamed, or built somewhere else.
+        # The shelf usually holds another one, and opening that beats refusing
+        # to start, because the window can open any index once it is up.
+        spare = first_index(os.path.join(base, core.CONFIG["books_dir"]))
+        if not spare:
+            complain(f"The rulebook index is missing.\n\nExpected it here:\n{db}"
+                     "\n\nCopy the whole Rule Buddy folder off the drive and "
+                     "try again.")
+        db = core.DB["path"] = spare
 
     from .app import App
     App(db, core.CONFIG["model"]).mainloop()

@@ -90,6 +90,56 @@ def require_text(doc, path, sample=12):
              "index is built from text.")
 
 
+def check_pdf(path, max_bytes=None):
+    """Can this PDF be indexed? Return {ok, pages, reason} without indexing it.
+
+    The importer asks this about a whole folder before it commits to any work,
+    so every test here is cheap: no page is laid out, and no text is kept.
+    """
+    out = {"path": path, "name": os.path.basename(path), "ok": False,
+           "pages": 0, "reason": ""}
+    if os.path.splitext(path)[1].lower() != ".pdf":
+        out["reason"] = "Not a PDF."
+        return out
+    try:
+        size = os.path.getsize(path)
+    except OSError as err:
+        out["reason"] = f"Cannot read the file: {err}"
+        return out
+    if max_bytes and size > max_bytes:
+        out["reason"] = (f"{size / 1_000_000:.0f} MB, over the "
+                         f"{max_bytes // 1_000_000} MB limit.")
+        return out
+
+    doc = None
+    try:
+        doc = pymupdf.open(path)
+        if doc.needs_pass:
+            out["reason"] = "Locked with a password."
+            return out
+        out["pages"] = doc.page_count
+        if not doc.page_count:
+            out["reason"] = "No pages."
+            return out
+        step = max(1, doc.page_count // 12)
+        if not any(doc[i].get_text().strip()
+                   for i in range(0, doc.page_count, step)):
+            out["reason"] = "A scan. It holds pictures, not text."
+            return out
+        if not doc.get_toc(simple=True):
+            out["reason"] = "No bookmarks. Build some in the Bookmark Editor."
+            return out
+    except Exception as err:
+        out["reason"] = f"{type(err).__name__}: {err}"
+        return out
+    finally:
+        if doc is not None:
+            doc.close()
+
+    out["ok"] = True
+    return out
+
+
 def read_outline(doc):
     """Return outline entries with a page and a vertical position."""
     raw = doc.get_toc(simple=True)
@@ -127,6 +177,9 @@ def rejoin(match):
     """Drop the break hyphen, unless the word is a compound like 'head-to-head'."""
     head = match.group(1)
     return head + ("-" if any(h in head for h in HYPHENS) else "")
+
+
+unpua = core.unpua
 
 
 def clean(raw, marks=None):
@@ -234,7 +287,7 @@ def runs_of(marks):
 
 def line_of(line):
     """One laid-out line: its text, a style code per character, and whether it is bold."""
-    text = "".join(span["text"] for span in line["spans"])
+    text = unpua("".join(span["text"] for span in line["spans"]))
     marks = "".join(style_code(span["font"]) * len(span["text"]) for span in line["spans"])
     bold = all(BOLD_FONT.search(span["font"]) for span in line["spans"] if span["text"].strip())
     return text, marks, bold

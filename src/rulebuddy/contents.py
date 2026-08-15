@@ -21,6 +21,8 @@ import re
 import sys
 import unicodedata
 
+from . import core
+
 try:
     import pymupdf
 except ImportError:                 # older installs expose the same module as fitz
@@ -43,7 +45,7 @@ def page_lines(page):
     out = []
     for block in data["blocks"]:
         for line in block.get("lines", []):
-            text = "".join(s["text"] for s in line["spans"]).strip()
+            text = core.unpua("".join(s["text"] for s in line["spans"])).strip()
             if not text:
                 continue
             x0, y0, _, y1 = line["bbox"]
