@@ -39,6 +39,41 @@ def flatten(title):
     return re.sub(r"\s+", " ", title).strip()
 
 
+MAX_CONTENTS_PAGES = 50
+
+# A range is written with a hyphen, an en dash, or an em dash, because a title
+# pasted out of a PDF carries whatever dash the typesetter used.
+RANGE = re.compile(r"^(\d+)\s*[-–—]\s*(\d+)$")
+
+
+def parse_pages(text):
+    """Read '4, 5, 8-11' into [4, 5, 8, 9, 10, 11].
+
+    Commas separate the list. A range is two numbers with a dash between them.
+    Raises ValueError with the message the status line should show.
+    """
+    numbers = []
+    for part in (p.strip() for p in re.split(r"[,\s]+", text or "") if p.strip()):
+        if part.isdigit():
+            numbers.append(int(part))
+            continue
+        found = RANGE.match(part)
+        if not found:
+            raise ValueError(f"“{part}” is not a page or a range. "
+                             "Use numbers such as: 4, 5, 8-11")
+        first, last = int(found.group(1)), int(found.group(2))
+        if last < first:
+            raise ValueError(f"The range {part} runs backwards.")
+        if last - first + 1 > MAX_CONTENTS_PAGES:
+            raise ValueError(f"{part} is more than {MAX_CONTENTS_PAGES} pages. "
+                             "A printed contents is shorter than that.")
+        numbers += list(range(first, last + 1))
+
+    # The parser reads the pages in order, and one page twice would double
+    # every entry printed on it.
+    return sorted(dict.fromkeys(numbers))
+
+
 class BookmarkEditor(tk.Toplevel):
     """Edit one PDF's bookmarks. Everything happens in this window."""
 
@@ -83,7 +118,9 @@ class BookmarkEditor(tk.Toplevel):
         ttk.Button(row, text="Read the PDF's bookmarks", command=self.read_toc
                    ).pack(side=tk.LEFT)
         ttk.Label(row, text="   or contents page(s)").pack(side=tk.LEFT)
-        ttk.Entry(row, textvariable=self.pages, width=12).pack(side=tk.LEFT, padx=6)
+        ttk.Entry(row, textvariable=self.pages, width=16).pack(side=tk.LEFT, padx=6)
+        ttk.Label(row, text="4, 5, 8-11", foreground=self.colors["muted"],
+                  font=self.fonts["small"]).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(row, text="Read", command=self.read_contents).pack(side=tk.LEFT)
 
         middle = ttk.Frame(self, padding=(12, 0, 12, 0))
@@ -276,9 +313,9 @@ class BookmarkEditor(tk.Toplevel):
             self.say("Open a PDF first.")
             return
         try:
-            numbers = [int(part) for part in self.pages.get().replace(",", " ").split()]
-        except ValueError:
-            self.say("Contents pages must be numbers, such as: 4 5 6")
+            numbers = parse_pages(self.pages.get())
+        except ValueError as err:
+            self.say(str(err))
             return
         if not numbers:
             self.say("Give the page the contents is printed on, such as: 4")

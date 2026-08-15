@@ -307,6 +307,44 @@ class BookmarkTitles(unittest.TestCase):
         self.assertEqual(bookmarks.flatten("   "), "")
 
 
+class ContentsPageNumbers(unittest.TestCase):
+    def test_a_comma_list(self):
+        self.assertEqual(bookmarks.parse_pages("4, 5, 6"), [4, 5, 6])
+
+    def test_a_range(self):
+        self.assertEqual(bookmarks.parse_pages("8-11"), [8, 9, 10, 11])
+
+    def test_a_list_and_a_range_together(self):
+        self.assertEqual(bookmarks.parse_pages("4, 5, 8-11"),
+                         [4, 5, 8, 9, 10, 11])
+
+    def test_spaces_still_separate(self):
+        """The field took spaces before, and a saved habit must not break."""
+        self.assertEqual(bookmarks.parse_pages("4 5 6"), [4, 5, 6])
+
+    def test_a_repeat_is_read_once(self):
+        self.assertEqual(bookmarks.parse_pages("5, 4-6"), [4, 5, 6])
+
+    def test_an_en_dash_is_a_range(self):
+        self.assertEqual(bookmarks.parse_pages("8–9"), [8, 9])
+
+    def test_nothing_gives_nothing(self):
+        self.assertEqual(bookmarks.parse_pages(""), [])
+        self.assertEqual(bookmarks.parse_pages("  ,  "), [])
+
+    def test_a_backwards_range_is_refused(self):
+        with self.assertRaises(ValueError):
+            bookmarks.parse_pages("11-8")
+
+    def test_a_huge_range_is_refused(self):
+        with self.assertRaises(ValueError):
+            bookmarks.parse_pages("1-500")
+
+    def test_words_are_refused(self):
+        with self.assertRaises(ValueError):
+            bookmarks.parse_pages("four")
+
+
 class PrivateUseLetters(unittest.TestCase):
     """Exigents sets Charm names in a font that hides its small caps in the PUA."""
 
