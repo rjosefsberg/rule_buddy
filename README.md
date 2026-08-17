@@ -54,12 +54,17 @@ the passage.
 ```sh
 git clone https://github.com/rjosefsberg/rule_buddy.git
 cd rule_buddy
-uv sync                      # or: pip install pymupdf
+uv sync                      # or: pip install -e .
 
 python -m rulebuddy.indexer index yourbook.pdf --db books/yourbook.db
 cp config.example.json config.json    # then put your key in it
 python -m rulebuddy
 ```
+
+`python -m rulebuddy` needs the package on the path, which `uv sync` or
+`pip install -e .` does. Without either, start it with `python run.py`, which
+puts `src/` on the path itself. That is the entry PyInstaller builds from, so it
+is the same code either way.
 
 Indexing a full-size rulebook takes a few minutes. Drop the resulting `.db` in
 `books/` and it appears in the sidebar.
