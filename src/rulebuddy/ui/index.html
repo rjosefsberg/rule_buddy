@@ -26,6 +26,8 @@
             <button class="tab" data-view="import">Import</button>
         </div>
         <span id="collection"></span>
+        <button id="text-smaller" title="Smaller text (Ctrl and minus)">A−</button>
+        <button id="text-bigger" title="Bigger text (Ctrl and plus)">A+</button>
     </div>
 
     <div id="panes">
@@ -189,6 +191,12 @@
     </div>
 
     <div id="status">Starting…</div>
+</div>
+
+<div id="book-menu" class="menu hidden">
+    <button data-do="rename">Rename…</button>
+    <button data-do="add">Add a book to this collection…</button>
+    <button data-do="remove">Remove this book…</button>
 </div>
 
 <dialog id="ask-line">

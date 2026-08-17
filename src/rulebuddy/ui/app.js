@@ -47,11 +47,15 @@ function showView(name) {
 function drawShelf(books, collection) {
     $("collection").textContent = collection;
     $("shelf-body").innerHTML = books.map((book) => `
-        <div class="book">
+        <div class="book" data-id="${book.id}" data-title="${escape(book.title)}">
             <h4>${escape(book.title)}</h4>
             <div class="meta">${book.pages} pages · ${book.chunks} sections</div>
             ${book.found ? "" : '<div class="meta missing">PDF not found</div>'}
         </div>`).join("");
+    // A right click acts on the card under the pointer, and never opens it.
+    $("shelf-body").querySelectorAll(".book").forEach((card) => {
+        card.oncontextmenu = (event) => showBookMenu(event, card);
+    });
     drawCollections();
 }
 
@@ -336,6 +340,53 @@ async function buildCharms() {
     loadFilters();
 }
 
+/* ------------------------------------------------------------ the book menu */
+
+function showBookMenu(event, card) {
+    event.preventDefault();
+    const menu = $("book-menu");
+    menu.dataset.id = card.dataset.id;
+    menu.dataset.title = card.dataset.title;
+    menu.style.left = `${event.clientX}px`;
+    menu.style.top = `${event.clientY}px`;
+    menu.classList.remove("hidden");
+}
+
+document.addEventListener("click", () => $("book-menu").classList.add("hidden"));
+
+async function runBookAction(what) {
+    const menu = $("book-menu");
+    const id = Number(menu.dataset.id);
+    const title = menu.dataset.title;
+    if (what === "rename") {
+        const name = await askLine(`Name for ${title}:`, title);
+        if (!name) return;
+        const out = await api().rename_book(id, name);
+        if (out.ok) drawShelf(out.books, $("collection").textContent);
+        else say(out.message);
+    } else if (what === "remove") {
+        if (!confirm(`Take ${title} out of this collection?\n\n`
+                     + "Its sections stop being searchable. The PDF is not deleted."))
+            return;
+        const out = await api().remove_book(id);
+        say(out.message);
+        if (out.ok) drawShelf(out.books, $("collection").textContent);
+    } else if (what === "add") {
+        const out = await api().add_book("");
+        if (!out.started) { if (out.message) say(out.message); return; }
+        say(`Adding ${out.name}…`);
+    }
+}
+
+/* ------------------------------------------------------------ text scaling */
+
+let scale = 0;
+
+function scaleText(step) {
+    scale = Math.max(-3, Math.min(6, scale + step));
+    document.documentElement.style.fontSize = `${14 + scale}px`;
+}
+
 /* ---------------------------------------------------------- a one line ask */
 
 /* WebView2 does not answer window.prompt, so the page carries its own. */
@@ -604,6 +655,17 @@ function wire() {
         tab.onclick = () => showView(tab.dataset.view);
     });
     $("sash").onmousedown = dragSash;
+    $("text-bigger").onclick = () => scaleText(1);
+    $("text-smaller").onclick = () => scaleText(-1);
+    document.addEventListener("keydown", (event) => {
+        if (!event.ctrlKey) return;
+        if (event.key === "+" || event.key === "=") scaleText(1);
+        else if (event.key === "-") scaleText(-1);
+        else if (event.key === "0") { scale = 0; scaleText(0); }
+    });
+    $("book-menu").querySelectorAll("button").forEach((item) => {
+        item.onclick = () => runBookAction(item.dataset.do);
+    });
     wireBookmarks();
     wireImport();
 }

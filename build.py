@@ -37,10 +37,18 @@ def build_exe():
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
         "--name", NAME, "--icon", ICON, "--paths", os.path.join(ROOT, "src"),
         "--collect-all", "pymupdf",
-        # The editor is imported inside a method, so the analysis can miss it.
-        # A missing module would only show when a user opens the Tools menu.
+        # The window is HTML, so the page has to travel with the exe. Without
+        # this the window opens on a blank white rectangle.
+        "--add-data", f"{os.path.join(ROOT, 'src', 'rulebuddy', 'ui')}{os.pathsep}rulebuddy/ui",
+        "--collect-all", "webview",
+        "--collect-all", "clr_loader",
+        "--collect-all", "pythonnet",
+        # These are imported inside a method, so the analysis can miss them.
+        # A missing module would only show when a user opens a tool.
+        "--hidden-import", "rulebuddy.shell",
         "--hidden-import", "rulebuddy.bookmarks",
         "--hidden-import", "rulebuddy.contents",
+        "--hidden-import", "rulebuddy.charms",
         "--distpath", os.path.join(WORK, "dist"),
         "--workpath", os.path.join(WORK, "work"),
         "--specpath", WORK,
@@ -104,6 +112,16 @@ def assemble(books, strip_key):
     for book in books:
         shutil.copy(book, os.path.join(APP, "books", os.path.basename(book)))
         print(f"  book: {os.path.basename(book)}")
+
+    # A machine with Edge already has WebView2. Drop the fixed version runtime
+    # in WebView2/ at the project root and it travels with the drive, so the
+    # window opens on a machine that has neither.
+    runtime = os.path.join(ROOT, "WebView2")
+    if os.path.isdir(runtime):
+        shutil.copytree(runtime, os.path.join(APP, "WebView2"), dirs_exist_ok=True)
+        print(f"  WebView2 runtime: {folder_size(runtime):.0f} MB")
+    else:
+        print("  WebView2 runtime: not carried. The machine must have Edge.")
 
     db, has_key = write_config(strip_key)
     readme = os.path.join(ROOT, "READ ME FIRST.txt")

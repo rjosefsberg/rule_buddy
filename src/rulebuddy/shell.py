@@ -29,7 +29,18 @@ try:
 except ImportError:                 # searching works; indexing will not
     indexer = pymupdf = None
 
-UI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
+def ui_dir():
+    """Where the page lives.
+
+    Frozen, the files are unpacked beside the bundle, not next to this module:
+    a module inside the archive has no folder on disk to look in.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "rulebuddy", "ui")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
+
+
+UI = ui_dir()
 MAX_BYTES = 250 * 1_000_000
 
 
@@ -412,6 +423,73 @@ class Api:
         self.tell("indexed", {"name": os.path.basename(target),
                               "collection": core.collection_name(self.db),
                               "books": self.books()})
+
+    # ---------------------------------------------------------- book actions
+
+    def rename_collection(self, name):
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "message": "A collection needs a name."}
+        self.db.execute("INSERT OR REPLACE INTO meta VALUES ('name',?)", (name,))
+        self.db.commit()
+        return {"ok": True, "collection": core.collection_name(self.db)}
+
+    def rename_book(self, book_id, name):
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "message": "A book needs a name."}
+        self.db.execute("UPDATE books SET title=? WHERE id=?", (name, book_id))
+        self.db.commit()
+        return {"ok": True, "books": self.books()}
+
+    def remove_book(self, book_id):
+        """Take one book out. Its sections stop being searchable."""
+        if len(self.books()) <= 1:
+            return {"ok": False,
+                    "message": "That is the only book. Delete the collection instead."}
+        indexer.remove_book(self.db, int(book_id))
+        return {"ok": True, "books": self.books(),
+                "message": "The book is out. Its PDF was not deleted."}
+
+    def add_book(self, path=""):
+        """Index another PDF into the collection that is open."""
+        path = path or self.pick_pdf()
+        if not path:
+            return {"started": False}
+        check = indexer.check_pdf(path, max_bytes=MAX_BYTES)
+        if not check["ok"]:
+            return {"started": False, "message": check["reason"]}
+        threading.Thread(target=self.add_work, args=(path,), daemon=True).start()
+        return {"started": True, "name": os.path.basename(path)}
+
+    def add_work(self, path):
+        target = core.DB["path"]
+        self.db.close()                 # Windows will not let us write it open
+        self.db = None
+        try:
+            indexer.add_book(path, target, progress=lambda stage, done, total:
+                             self.tell("indexing", {"stage": stage, "done": done,
+                                                    "total": total}))
+        except Exception as err:
+            self.db = core.connect()
+            self.tell("index_failed", {"message": f"{type(err).__name__}: {err}"})
+            return
+        self.db = core.connect()
+        self.tell("indexed", {"name": os.path.basename(path),
+                              "collection": core.collection_name(self.db),
+                              "books": self.books()})
+
+    def delete_collection(self, path):
+        """Delete a whole collection file. The PDFs behind it are not touched."""
+        if os.path.normcase(os.path.abspath(path)) == \
+                os.path.normcase(os.path.abspath(core.DB["path"])):
+            return {"ok": False,
+                    "message": "That collection is open. Open another one first."}
+        try:
+            os.remove(path)
+        except OSError as err:
+            return {"ok": False, "message": str(err)}
+        return {"ok": True, "message": f"Deleted {os.path.basename(path)}."}
 
     def open_index(self, path):
         """Point the window at another collection."""

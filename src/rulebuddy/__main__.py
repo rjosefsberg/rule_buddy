@@ -25,6 +25,21 @@ def complain(message):
     sys.exit(1)
 
 
+def find_webview2(base):
+    """Point at the runtime on the drive, when one travels with us.
+
+    A machine with Edge already has WebView2. A machine without it has nothing
+    to draw the window with, so the drive can carry the fixed version runtime
+    in WebView2/ beside the exe. The environment variable is how the loader is
+    told to use it.
+    """
+    if os.environ.get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"):
+        return                              # the user already chose one
+    carried = os.path.join(base, "WebView2")
+    if os.path.isdir(carried):
+        os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = carried
+
+
 def first_index(shelf):
     """Any index on the shelf, by name. Returns a full path, or None."""
     try:
@@ -40,6 +55,7 @@ def main():
     base = core.app_dir()
     os.chdir(base)
     core.load_config()
+    find_webview2(base)
 
     db = core.DB["path"]
     if not os.path.isabs(db):
@@ -56,6 +72,20 @@ def main():
                      "\n\nCopy the whole Rule Buddy folder off the drive and "
                      "try again.")
         db = core.DB["path"] = spare
+
+    # The webview window is the one that is built and shipped. The Tk window is
+    # kept for a machine with no WebView2, and for --tk while the port settles.
+    if "--tk" not in sys.argv:
+        try:
+            from . import shell
+            shell.start(db)
+            return
+        except ImportError:
+            pass                        # no pywebview here, so fall back
+        except Exception as err:
+            complain("The window could not open.\n\n"
+                     f"{type(err).__name__}: {err}\n\n"
+                     "This needs WebView2, which ships with Microsoft Edge.")
 
     from .app import App
     App(db, core.CONFIG["model"]).mainloop()

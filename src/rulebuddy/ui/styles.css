@@ -47,6 +47,8 @@
 
 * { box-sizing: border-box; }
 
+html { font-size: 14px; }        /* the one number text scaling changes */
+
 html, body {
     height: 100%;
     margin: 0;
@@ -55,7 +57,7 @@ html, body {
 
 body {
     display: flex;
-    font: 14px/1.45 var(--body);
+    font: 1rem/1.45 var(--body);
     background: var(--chrome);
     color: var(--ink);
 }
@@ -77,7 +79,7 @@ body {
 #collections { flex: none; border-top: 1px solid var(--rule); padding-top: 10px; }
 #collections .book { cursor: pointer; }
 #collections .book:hover { border-color: var(--accent); }
-#collections .shelf-head { padding: 0 0 6px; font-size: 12px; color: var(--muted); }
+#collections .shelf-head { padding: 0 0 6px; font-size: 0.86rem; color: var(--muted); }
 
 .shelf-head {
     display: flex;
@@ -93,7 +95,7 @@ body {
     border: 0;
     background: none;
     color: var(--muted);
-    font-size: 16px;
+    font-size: 1.14rem;
     cursor: pointer;
     padding: 0 4px;
 }
@@ -109,8 +111,8 @@ body {
 }
 
 .book.open { border-color: var(--accent); background: var(--quote); }
-.book h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
-.book .meta { color: var(--muted); font: 11px var(--mono); }
+.book h4 { margin: 0 0 4px; font-size: 0.93rem; font-weight: 600; }
+.book .meta { color: var(--muted); font: 0.79rem var(--mono); }
 .book .missing { color: var(--warn); }
 
 /* ------------------------------------------------------------- the panes */
@@ -235,7 +237,7 @@ table.rows th {
     position: sticky;
     top: 0;
     text-align: left;
-    font-size: 12px;
+    font-size: 0.86rem;
     font-weight: 600;
     color: var(--accent);
     background: var(--quote);
@@ -254,8 +256,8 @@ table.rows td {
 table.rows tr:nth-child(even) td { background: var(--quote); }
 table.rows tr:hover td { background: var(--mark); }
 table.rows tr.on td { background: var(--accent); color: var(--page); }
-table.rows td.num { text-align: right; font: 12px var(--mono); }
-table.rows td.tag { color: var(--muted); font: 11px var(--mono); }
+table.rows td.num { text-align: right; font: 0.86rem var(--mono); }
+table.rows td.tag { color: var(--muted); font: 0.79rem var(--mono); }
 table.rows tr.on td.num, table.rows tr.on td.tag { color: var(--page); }
 
 /* ------------------------------------------------------------ the excerpt */
@@ -275,14 +277,14 @@ table.rows tr.on td.num, table.rows tr.on td.tag { color: var(--page); }
 #excerpt > * { max-width: 68ch; margin-left: auto; margin-right: auto; }
 
 #excerpt .head {
-    font: 12px var(--mono);
+    font: 0.86rem var(--mono);
     color: var(--muted);
     margin-bottom: 18px;
 }
 
-#excerpt p, #excerpt h3 { font-family: var(--read); font-size: 16px; }
+#excerpt p, #excerpt h3 { font-family: var(--read); font-size: 1.14rem; }
 #excerpt p { margin: 0 0 12px; }
-#excerpt h3 { color: var(--accent); font-size: 17px; margin: 22px 0 8px; }
+#excerpt h3 { color: var(--accent); font-size: 1.21rem; margin: 22px 0 8px; }
 #excerpt mark { background: var(--mark); color: inherit; }
 
 /* ---------------------------------------------------------------- the ask */
@@ -310,21 +312,21 @@ table.rows tr.on td.num, table.rows tr.on td.tag { color: var(--page); }
 .turn + .turn { margin-top: 22px; }
 
 .turn-label {
-    font: 11px var(--mono);
+    font: 0.79rem var(--mono);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--muted);
     margin-bottom: 6px;
 }
 
-.turn p, .turn li { font-family: var(--read); font-size: 16px; margin: 0 0 10px; }
+.turn p, .turn li { font-family: var(--read); font-size: 1.14rem; margin: 0 0 10px; }
 .turn ul { margin: 0 0 10px; padding-left: 22px; }
 .turn p.warn { color: var(--warn); font-family: var(--body); font-size: 14px; }
 
 a.cite {
     color: var(--accent);
     text-decoration: none;
-    font: 12px var(--mono);
+    font: 0.86rem var(--mono);
     white-space: nowrap;
 }
 
@@ -353,7 +355,7 @@ a.cite:hover { text-decoration: underline; }
     white-space: nowrap;
     text-overflow: ellipsis;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.86rem;
     align-self: center;
 }
 
@@ -364,7 +366,7 @@ a.cite:hover { text-decoration: underline; }
 #status {
     padding: 5px var(--gap);
     border-top: 1px solid var(--rule);
-    font: 12px var(--mono);
+    font: 0.86rem var(--mono);
     color: var(--muted);
     white-space: nowrap;
     overflow: hidden;
@@ -384,7 +386,7 @@ a.cite:hover { text-decoration: underline; }
     display: flex;
     align-items: center;
     gap: 5px;
-    font-size: 12px;
+    font-size: 0.86rem;
     color: var(--muted);
 }
 
@@ -402,6 +404,31 @@ a.cite:hover { text-decoration: underline; }
 #charm-detail dt { font-weight: 600; }
 #charm-detail dd { margin: 0; }
 #charm-detail h2 { color: var(--accent); font-family: var(--read); margin: 0 0 12px; }
+
+/* ------------------------------------------------------------ a small menu */
+
+.menu {
+    position: fixed;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    min-width: 220px;
+    padding: 4px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--page);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.menu button {
+    border: 0;
+    background: none;
+    text-align: left;
+    padding: 7px 10px;
+    border-radius: 4px;
+}
+
+.menu button:hover { background: var(--quote); color: var(--accent); }
 
 /* --------------------------------------------------------------- dialogs */
 
