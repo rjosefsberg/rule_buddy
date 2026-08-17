@@ -13,13 +13,17 @@
         <button class="shelf-toggle" id="shelf-toggle" title="Hide the shelf">‹</button>
     </div>
     <div class="shelf-body" id="shelf-body"></div>
+    <div class="shelf-body" id="collections"></div>
 </aside>
 
 <div id="main">
     <div id="bar">
         <div class="tabs">
             <button class="tab on" data-view="search">Search</button>
+            <button class="tab" data-view="ask">Ask</button>
             <button class="tab" data-view="library">Charm Library</button>
+            <button class="tab" data-view="bookmarks">Bookmarks</button>
+            <button class="tab" data-view="import">Import</button>
         </div>
         <span id="collection"></span>
     </div>
@@ -45,6 +49,31 @@
                 </div>
                 <div class="field">
                     <button id="open-pdf">Open the PDF at this page</button>
+                </div>
+            </div>
+
+            <!-- ask view -->
+            <div class="view hidden" data-view="ask">
+                <div id="transcript"></div>
+                <form class="field" id="ask-form">
+                    <textarea id="question" rows="3" placeholder="Ask the book…"
+                              spellcheck="false"></textarea>
+                </form>
+                <div class="field">
+                    <span class="hint" id="ask-hint">Enter asks · Shift+Enter adds a line</span>
+                    <button type="button" id="ask-clear">Clear</button>
+                    <button type="button" id="ask-more">Ask more</button>
+                    <button type="button" class="primary" id="ask-new">New question</button>
+                </div>
+                <div class="list-wrap" id="ask-sources-wrap">
+                    <table class="rows">
+                        <thead><tr>
+                            <th style="width:34%">Book</th>
+                            <th>Section</th>
+                            <th style="width:74px">Page</th>
+                        </tr></thead>
+                        <tbody id="ask-sources"></tbody>
+                    </table>
                 </div>
             </div>
 
@@ -82,10 +111,76 @@
             </div>
         </div>
 
+            <!-- bookmark editor -->
+            <div class="view hidden" data-view="bookmarks">
+                <div class="field">
+                    <input type="text" id="bm-path" placeholder="Open a PDF. Any PDF will do."
+                           readonly>
+                    <button type="button" id="bm-open">Open…</button>
+                </div>
+                <div class="field">
+                    <button type="button" id="bm-read">Read the PDF's bookmarks</button>
+                    <span class="hint">or contents page(s)</span>
+                    <input type="text" id="bm-pages" placeholder="4, 5, 8-11"
+                           style="flex:0 0 140px">
+                    <button type="button" id="bm-parse">Read</button>
+                </div>
+                <div class="list-wrap">
+                    <table class="rows">
+                        <thead><tr>
+                            <th>Title</th>
+                            <th style="width:80px">Page</th>
+                        </tr></thead>
+                        <tbody id="bm-rows"></tbody>
+                    </table>
+                </div>
+                <div class="field">
+                    <button type="button" id="bm-rename">Rename…</button>
+                    <button type="button" id="bm-out">◀ Out</button>
+                    <button type="button" id="bm-in">In ▶</button>
+                    <button type="button" id="bm-page">Set page…</button>
+                    <button type="button" id="bm-add">Add…</button>
+                    <button type="button" id="bm-del">Delete</button>
+                    <span class="hint"></span>
+                    <button type="button" class="primary" id="bm-save">Save to PDF</button>
+                </div>
+            </div>
+
+            <!-- folder import -->
+            <div class="view hidden" data-view="import">
+                <div class="field">
+                    <input type="text" id="im-folder" placeholder="Pick a folder of PDFs."
+                           readonly>
+                    <button type="button" id="im-browse">Browse…</button>
+                </div>
+                <div class="field">
+                    <label class="hint" style="flex:0 0 auto">
+                        <input type="checkbox" id="im-deep"> Look in subfolders</label>
+                    <button type="button" id="im-check">Check the PDFs</button>
+                    <span class="hint" id="im-count"></span>
+                </div>
+                <div class="list-wrap">
+                    <table class="rows">
+                        <thead><tr>
+                            <th style="width:40%">Book</th>
+                            <th style="width:70px">Pages</th>
+                            <th>Verdict</th>
+                        </tr></thead>
+                        <tbody id="im-rows"></tbody>
+                    </table>
+                </div>
+                <div class="field">
+                    <span class="hint" style="flex:0 0 auto">Collection name</span>
+                    <input type="text" id="im-name">
+                    <button type="button" class="primary" id="im-index" disabled>
+                        Index the good books</button>
+                </div>
+            </div>
+
         <div id="sash"></div>
 
         <div id="right">
-            <div id="excerpt" class="view" data-view="search"></div>
+            <div id="excerpt" class="view" data-view="search ask"></div>
             <div id="charm-detail" class="view hidden" data-view="library"
                  style="flex:1;min-height:0;overflow-y:auto;margin:var(--gap);
                         padding:22px 26px;background:var(--paper);
@@ -95,6 +190,17 @@
 
     <div id="status">Starting…</div>
 </div>
+
+<dialog id="ask-line">
+    <form method="dialog">
+        <p id="ask-line-prompt"></p>
+        <input type="text" id="ask-line-value" autocomplete="off">
+        <div class="field" style="padding:12px 0 0;justify-content:flex-end">
+            <button value="">Cancel</button>
+            <button class="primary" id="ask-line-ok" value="ok">OK</button>
+        </div>
+    </form>
+</dialog>
 
 <script src="app.js"></script>
 </body>
