@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rule Buddy</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<aside id="shelf">
+    <div class="shelf-head">
+        <span class="shelf-title">Books</span>
+        <button class="shelf-toggle" id="shelf-toggle" title="Hide the shelf">‹</button>
+    </div>
+    <div class="shelf-body" id="shelf-body"></div>
+</aside>
+
+<div id="main">
+    <div id="bar">
+        <div class="tabs">
+            <button class="tab on" data-view="search">Search</button>
+            <button class="tab" data-view="library">Charm Library</button>
+        </div>
+        <span id="collection"></span>
+    </div>
+
+    <div id="panes">
+        <div id="left">
+            <!-- search view -->
+            <div class="view" data-view="search">
+                <form class="field" id="search-form">
+                    <input type="search" id="terms" placeholder="Ask the book…"
+                           autocomplete="off" spellcheck="false">
+                    <button class="primary" type="submit">Search</button>
+                </form>
+                <div class="list-wrap">
+                    <table class="rows">
+                        <thead><tr>
+                            <th style="width:34%">Book</th>
+                            <th>Section</th>
+                            <th style="width:74px">Page</th>
+                        </tr></thead>
+                        <tbody id="results"></tbody>
+                    </table>
+                </div>
+                <div class="field">
+                    <button id="open-pdf">Open the PDF at this page</button>
+                </div>
+            </div>
+
+            <!-- library view -->
+            <div class="view hidden" data-view="library">
+                <form class="field" id="charm-form">
+                    <input type="search" id="charm-terms" placeholder="Find a Charm…"
+                           autocomplete="off" spellcheck="false">
+                    <button class="primary" type="submit">Find</button>
+                    <button type="button" id="charm-clear">Clear</button>
+                </form>
+                <div class="filters">
+                    <label>Book <select id="f-book"></select></label>
+                    <label>Tree <select id="f-tree"></select></label>
+                    <label>Type <select id="f-type"></select></label>
+                    <label>Keyword <select id="f-keyword"></select></label>
+                    <label>Essence up to <select id="f-essence"></select></label>
+                </div>
+                <div class="list-wrap">
+                    <table class="rows">
+                        <thead><tr>
+                            <th>Charm</th>
+                            <th style="width:26%">Tree</th>
+                            <th style="width:86px">Cost</th>
+                            <th style="width:52px">Ess</th>
+                            <th style="width:64px">Page</th>
+                        </tr></thead>
+                        <tbody id="charm-rows"></tbody>
+                    </table>
+                </div>
+                <div class="field">
+                    <button id="charm-build">Build the library</button>
+                    <button id="charm-open">Open the PDF at this page</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="sash"></div>
+
+        <div id="right">
+            <div id="excerpt" class="view" data-view="search"></div>
+            <div id="charm-detail" class="view hidden" data-view="library"
+                 style="flex:1;min-height:0;overflow-y:auto;margin:var(--gap);
+                        padding:22px 26px;background:var(--paper);
+                        color:var(--paperink);border-radius:var(--radius)"></div>
+        </div>
+    </div>
+
+    <div id="status">Starting…</div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,327 @@
+/* styles.css - the whole look of Rule Buddy.
+
+   Two voices, as before: the app is set in the system face, and anything out
+   of a book is set in serif on a warmer ground, so chrome is never mistaken
+   for content.
+
+   Layout note: every flex child that holds text carries min-width: 0. Without
+   it a child refuses to shrink below its content, which is the same floor that
+   made the Tk panes fight. */
+
+:root {
+    --page: #ffffff;
+    --ink: #1a1a1a;
+    --muted: #6b6b6b;
+    --accent: #1a4e8a;
+    --mark: #fbea9e;
+    --warn: #9a3d16;
+    --quote: #f4f5f6;
+    --rule: #d2d6da;
+    --chrome: #f0f1f3;
+    --paper: #fbf8f1;
+    --paperink: #241f17;
+
+    --body: system-ui, "Segoe UI", sans-serif;
+    --read: Cambria, Georgia, "Palatino Linotype", serif;
+    --mono: Consolas, Menlo, "DejaVu Sans Mono", monospace;
+
+    --gap: 12px;
+    --radius: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --page: #1e1e1e;
+        --ink: #e4e4e4;
+        --muted: #8c8c8c;
+        --accent: #7aa7dc;
+        --mark: #5a4a16;
+        --warn: #d08a6a;
+        --quote: #2a2a2a;
+        --rule: #3a3a3a;
+        --chrome: #252525;
+        --paper: #22211f;
+        --paperink: #e6e1d6;
+    }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
+body {
+    display: flex;
+    font: 14px/1.45 var(--body);
+    background: var(--chrome);
+    color: var(--ink);
+}
+
+/* ----------------------------------------------------------- the shelf */
+
+#shelf {
+    width: 265px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--rule);
+    background: var(--chrome);
+}
+
+#shelf.closed { width: 26px; }
+#shelf.closed .shelf-body, #shelf.closed .shelf-title { display: none; }
+
+.shelf-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    font-weight: 600;
+}
+
+.shelf-title { flex: 1; min-width: 0; }
+
+.shelf-toggle {
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+.shelf-body { overflow-y: auto; padding: 0 10px 10px; }
+
+.book {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 10px;
+    margin-bottom: 8px;
+    cursor: default;
+}
+
+.book.open { border-color: var(--accent); background: var(--quote); }
+.book h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.book .meta { color: var(--muted); font: 11px var(--mono); }
+.book .missing { color: var(--warn); }
+
+/* ------------------------------------------------------------- the panes */
+
+#main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+#bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px var(--gap);
+    border-bottom: 1px solid var(--rule);
+}
+
+#bar .tabs { display: flex; gap: 4px; margin-right: auto; }
+
+.tab {
+    border: 1px solid transparent;
+    background: none;
+    color: var(--muted);
+    padding: 5px 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font: inherit;
+}
+
+.tab.on { color: var(--ink); background: var(--quote); border-color: var(--rule); }
+
+#panes {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+/* The split. The left pane is a percentage of the row and nothing else gets
+   a say: min-width: 0 stops its contents putting a floor under it. */
+#left {
+    flex: 0 0 var(--split, 40%);
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#sash {
+    flex: none;
+    width: 6px;
+    cursor: col-resize;
+    background: var(--rule);
+    opacity: 0.5;
+}
+
+#sash:hover { opacity: 1; background: var(--accent); }
+
+#right {
+    flex: 1;
+    min-width: 240px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* ------------------------------------------------------------ the search */
+
+.field {
+    display: flex;
+    gap: 8px;
+    padding: var(--gap);
+}
+
+.field input[type="search"], .field input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--page);
+    color: var(--ink);
+    font: inherit;
+}
+
+.field input:focus { outline: none; border-color: var(--accent); }
+
+button {
+    padding: 7px 14px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--page);
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+}
+
+button:hover { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ------------------------------------------------------------ the results */
+
+.list-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    margin: 0 var(--gap);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--page);
+}
+
+table.rows {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+table.rows th {
+    position: sticky;
+    top: 0;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--quote);
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--rule);
+}
+
+table.rows td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--rule);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+table.rows tr:nth-child(even) td { background: var(--quote); }
+table.rows tr:hover td { background: var(--mark); }
+table.rows tr.on td { background: var(--accent); color: var(--page); }
+table.rows td.num { text-align: right; font: 12px var(--mono); }
+table.rows td.tag { color: var(--muted); font: 11px var(--mono); }
+table.rows tr.on td.num, table.rows tr.on td.tag { color: var(--page); }
+
+/* ------------------------------------------------------------ the excerpt */
+
+#excerpt {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    margin: var(--gap);
+    padding: 26px 0;
+    background: var(--paper);
+    color: var(--paperink);
+    border-radius: var(--radius);
+}
+
+/* The measure, not the pane, decides the line length. */
+#excerpt > * { max-width: 68ch; margin-left: auto; margin-right: auto; }
+
+#excerpt .head {
+    font: 12px var(--mono);
+    color: var(--muted);
+    margin-bottom: 18px;
+}
+
+#excerpt p, #excerpt h3 { font-family: var(--read); font-size: 16px; }
+#excerpt p { margin: 0 0 12px; }
+#excerpt h3 { color: var(--accent); font-size: 17px; margin: 22px 0 8px; }
+#excerpt mark { background: var(--mark); color: inherit; }
+
+/* -------------------------------------------------------------- the status */
+
+#status {
+    padding: 5px var(--gap);
+    border-top: 1px solid var(--rule);
+    font: 12px var(--mono);
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ------------------------------------------------------------- the library */
+
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 var(--gap) var(--gap);
+}
+
+.filters label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.filters select {
+    padding: 5px 6px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--page);
+    color: var(--ink);
+    font: inherit;
+    max-width: 190px;
+}
+
+#charm-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
+#charm-detail dt { font-weight: 600; }
+#charm-detail dd { margin: 0; }
+#charm-detail h2 { color: var(--accent); font-family: var(--read); margin: 0 0 12px; }
+
+.hidden { display: none !important; }

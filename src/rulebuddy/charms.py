@@ -304,7 +304,7 @@ def search(db, terms="", tree="", type_="", keyword="", book="", essence=0):
         where.append("c.essence <= ?")
         args.append(int(essence))
 
-    sql = ("SELECT c.*, b.title AS book " + joins
+    sql = ("SELECT c.*, b.title AS book, b.source AS source " + joins
            + (" WHERE " + " AND ".join(where) if where else "")
            + " ORDER BY c.tree, c.essence, c.rating, c.name")
     return db.execute(sql, args).fetchall()
