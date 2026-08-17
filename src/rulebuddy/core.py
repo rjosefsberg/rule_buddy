@@ -279,8 +279,8 @@ def retrieve(db, question, limit=25):
     if not query:
         return []
     rows = db.execute("""
-        SELECT s.id, s.path, s.title, s.number, s.page_start, s.page_end, s.text,
-               s.styles, b.title AS book, b.source AS source
+        SELECT s.id, s.book_id, s.path, s.title, s.number, s.page_start,
+               s.page_end, s.text, s.styles, b.title AS book, b.source AS source
         FROM sections_fts f JOIN sections s ON s.id = f.rowid
         LEFT JOIN books b ON b.id = s.book_id
         WHERE sections_fts MATCH ?
@@ -298,7 +298,8 @@ def retrieve(db, question, limit=25):
             if number == row["number"]:
                 continue
             for extra in db.execute(
-                "SELECT s.id,s.path,s.title,s.number,s.page_start,s.page_end,s.text,"
+                "SELECT s.id,s.book_id,s.path,s.title,s.number,s.page_start,"
+                " s.page_end,s.text,"
                 " s.styles, b.title AS book, b.source AS source FROM sections s"
                 " LEFT JOIN books b ON b.id = s.book_id"
                 " WHERE s.number=? AND s.part=0 LIMIT 1", (number,)):
@@ -307,7 +308,83 @@ def retrieve(db, question, limit=25):
                     item["cited"] = True
                     item["rank"] = len(found)
                     found[item["id"]] = item
-    return list(found.values())[:limit + 6]
+    return join_chunks(db, list(found.values())[:limit + 6])
+
+
+# A long section is stored as several overlapping chunks, and a search that hits
+# a whole chapter returns each chunk as its own result. Seven rows of "Socialize"
+# are one passage, so they go back together before anything sees them.
+
+def join_chunks(db, rows, gap=40):
+    """Fold the chunks of one section into a single result.
+
+    Chunks of a section share a book and a path. The stretch between the first
+    and the last chunk that matched is read back in full, so the joined text has
+    no hole where a chunk in the middle failed to match.
+    """
+    groups = {}
+    for row in rows:
+        groups.setdefault((row["book_id"], row["path"]), []).append(row)
+
+    out = []
+    for (book_id, path), members in groups.items():
+        if len(members) < 2:
+            out += members
+            continue
+        ids = sorted(m["id"] for m in members)
+        if ids[-1] - ids[0] > gap:      # too far apart to be one passage
+            out += members
+            continue
+        full = db.execute(
+            "SELECT id, page_start, page_end, text, styles FROM sections"
+            " WHERE book_id IS ? AND path = ? AND id BETWEEN ? AND ?"
+            " ORDER BY id", (book_id, path, ids[0], ids[-1])).fetchall()
+        out.append(joined(members, full or members))
+    out.sort(key=lambda r: r["rank"])
+    return out
+
+
+def overlap(before, after):
+    """How many opening lines of `after` repeat the tail of `before`.
+
+    The indexer overlaps its chunks so a passage is never cut in half. Joined
+    back together, that overlap would print the same paragraphs twice.
+    """
+    most = min(len(before), len(after))
+    for size in range(most, 0, -1):
+        if before[-size:] == after[:size]:
+            return size
+    return 0
+
+
+def joined(members, pieces):
+    """One result out of several chunks, keeping the styles lined up.
+
+    The chunks overlap on purpose, so the shared paragraphs are dropped as each
+    piece goes on. The style runs move with the text they mark.
+    """
+    best = min(members, key=lambda r: r["rank"])
+    merged = dict(best)
+    texts, runs, lines, at = [], [], [], 0
+    for piece in pieces:
+        text = piece["text"] or ""
+        own = text.split("\n")
+        drop = overlap(lines, own)
+        cut = len("\n".join(own[:drop])) + (1 if 0 < drop < len(own) else 0)
+        for start, end, code in json.loads(piece["styles"] or "[]"):
+            if end > cut:
+                runs.append([max(0, start - cut) + at, end - cut + at, code])
+        texts.append(text[cut:])
+        lines += own[drop:]
+        at += len(text) - cut + 1               # the newline that joins them
+    merged["text"] = "\n".join(texts)
+    merged["styles"] = json.dumps(runs, separators=(",", ":")) if runs else None
+    merged["page_start"] = min(p["page_start"] for p in pieces)
+    merged["page_end"] = max(p["page_end"] for p in pieces)
+    # Every chunk keeps its id, so a citation to any of them still resolves.
+    merged["members"] = [p["id"] for p in pieces]
+    merged["cited"] = all(m.get("cited") for m in members)
+    return merged
 
 
 # --------------------------------------------------------------- the model
@@ -316,7 +393,10 @@ def build_prompt(question, sources, outline):
     lines = ["Excerpts from the rulebook:\n"]
     budget = 60000
     for src in sources:
-        text = src["text"][:6000]
+        # A joined section carries a whole Charm tree, so one excerpt is much
+        # longer than a chunk was. There are fewer of them now, and the budget
+        # below still holds the whole prompt down.
+        text = src["text"][:15000]
         # The book has to be in the header: page 87 means nothing on its own once
         # a collection holds more than one book.
         book = f"{src['book']} — " if src.get("book") else ""

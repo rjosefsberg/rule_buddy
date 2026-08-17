@@ -331,6 +331,7 @@ class App(tk.Tk):
 
         m_tools = tk.Menu(menu, tearoff=0)
         m_tools.add_command(label="Bookmark Editor…", command=self.open_bookmarks)
+        m_tools.add_command(label="Charm Library…", command=self.open_library)
         menu.add_cascade(label="Tools", menu=m_tools)
 
         m_mode = tk.Menu(menu, tearoff=0)
@@ -546,8 +547,15 @@ class App(tk.Tk):
         self.panes.pack(fill=tk.BOTH, expand=True)
         ai = self.ai_mode()
 
+        # The share of the width the left pane gets. AI mode gives the book side
+        # the larger half: the answer is short, and the excerpt beside it is
+        # what gets read. Search only keeps the results next to the question, so
+        # the balance goes the other way.
+        self.sash_at = 0.40 if ai else 0.60
+        self.sash_held = False          # true once the user drags the sash
+
         left = ttk.Frame(self.panes)
-        self.panes.add(left, weight=3)
+        self.panes.add(left, weight=2 if ai else 3)
         # The composer is packed first so it claims its height before anything
         # else. Pack hands out space in packing order, so a greedy widget packed
         # ahead of it would squeeze the question box off the bottom of a short
@@ -556,13 +564,38 @@ class App(tk.Tk):
         self.transcript = self.build_transcript(left) if ai else None
 
         right = ttk.Frame(self.panes)
-        self.panes.add(right, weight=2)
+        self.panes.add(right, weight=3 if ai else 2)
         self.right = right
 
         # Search only puts the results next to the question that produced them;
         # AI mode keeps them beside the answer that cites them.
         self.build_results(left if not ai else right, fill=not ai)
         self.build_excerpt(right)
+        # A weight only shares out space added later, so the opening position
+        # has to be set by hand. It is set on every resize, not once: the first
+        # Configure arrives before the window has its real geometry, and a
+        # position set against that width would be wrong for good.
+        self.panes.bind("<Configure>", self.place_sash)
+        # A drag is the user's decision, and the app stops moving the sash then.
+        # Only the sash itself carries these: a click inside a pane goes to the
+        # widget under it, not to the paned window.
+        for event in ("<ButtonPress-1>", "<B1-Motion>", "<ButtonRelease-1>"):
+            self.panes.bind(event, self.hold_sash, add="+")
+
+    def hold_sash(self, _event=None):
+        self.sash_held = True
+
+    def place_sash(self, _event=None):
+        """Hold the divider at its share of the width until the user moves it."""
+        if self.sash_held:
+            return
+        width = self.panes.winfo_width()
+        if width < 200:                  # too early: the window has no size yet
+            return
+        try:
+            self.panes.sashpos(0, int(width * self.sash_at))
+        except tk.TclError:
+            pass
 
     def build_transcript(self, parent):
         wrap = ttk.Frame(parent)
@@ -571,7 +604,7 @@ class App(tk.Tk):
                        spacing1=3, spacing2=4, spacing3=9, cursor="arrow",
                        bg=self.colors["paper"], fg=self.colors["paperink"],
                        insertbackground=self.colors["paperink"],
-                       highlightthickness=0, state="disabled", height=8)
+                       highlightthickness=0, state="disabled", height=8, width=1)
         bar = ttk.Scrollbar(wrap, command=text.yview)
         text.configure(yscrollcommand=bar.set)
         bar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -603,7 +636,7 @@ class App(tk.Tk):
         self.entry = tk.Text(field, height=3 if ai else 1, wrap="word", relief="flat",
                              bd=0, padx=10, pady=8, bg=self.colors["page"],
                              fg=self.colors["ink"], insertbackground=self.colors["ink"],
-                             highlightthickness=0)
+                             highlightthickness=0, width=1)
         self.entry.pack(fill=tk.BOTH, expand=True)
         self.entry.bind("<Return>", self.on_return)
         self.entry.bind("<Shift-Return>", lambda e: None)
@@ -630,29 +663,65 @@ class App(tk.Tk):
                                    command=lambda: self.submit(follow=False))
             self.send.pack(side=tk.RIGHT, padx=(0, 8))
             hint = "Searching your books  ·  a key adds written answers"
-        self.hint = ttk.Label(row, text=hint, foreground=self.colors["muted"], anchor="w")
-        self.hint.pack(side=tk.LEFT, fill=tk.Y)
+        # width=1 so the label asks for one character, not the width of its
+        # text. A label cannot be squeezed below what it asks for, and this one
+        # sits in the left pane: at its natural width it puts a floor under that
+        # pane, and the sash springs back off it. It fills the space that is
+        # left over, so the hint still reads in full on a wide window.
+        self.hint = ttk.Label(row, text=hint, foreground=self.colors["muted"],
+                              anchor="w", width=1)
+        self.hint.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     def build_results(self, parent, fill):
         head = ttk.Label(parent, text="Sections found", padding=(8, 6))
         head.pack(fill=tk.X)
-        self.tree = ttk.Treeview(parent, columns=("page",), show="tree headings",
-                                 height=12)
-        self.tree.heading("#0", text="Section")
+        self.tree = ttk.Treeview(parent, columns=("section", "page"),
+                                 show="tree headings", height=12)
+        # The book is its own column. A section name means little on its own
+        # once a collection holds five books that all have a chapter six.
+        self.tree.heading("#0", text="Book")
+        self.tree.heading("section", text="Section")
         self.tree.heading("page", text="Page")
-        self.tree.column("#0", width=240, stretch=True)
+        self.tree.column("#0", width=400, stretch=False)
+        self.tree.column("section", width=100, stretch=True)
         self.tree.column("page", width=64, stretch=False, anchor="e")
         self.tree.pack(fill=tk.BOTH, expand=fill, padx=6)
         self.tree.bind("<<TreeviewSelect>>", self.on_pick)
         self.tree.bind("<Double-1>", lambda e: self.open_at_page())
-        self.open_btn = ttk.Button(parent, text="Open the PDF at this page",
+        self.tree.bind("<Button-3>", self.post_result_menu)
+
+        # Its own row, packed after the list, so a full list cannot squeeze it
+        # off the bottom in either mode.
+        row = ttk.Frame(parent)
+        row.pack(fill=tk.X, padx=6, pady=(6, 0))
+        self.open_btn = ttk.Button(row, text="Open the PDF at this page",
                                    command=self.open_at_page)
-        self.open_btn.pack(anchor="w", padx=6, pady=(6, 0))
+        self.open_btn.pack(side=tk.LEFT)
+
+        self.result_menu = tk.Menu(self, tearoff=0)
+        self.result_menu.add_command(label="Open the PDF at this page",
+                                     command=self.open_at_page)
+
+    def post_result_menu(self, event):
+        """Right click acts on the row under the pointer."""
+        row = self.tree.identify_row(event.y)
+        if not row:
+            return
+        self.tree.selection_set(row)
+        try:
+            self.result_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.result_menu.grab_release()
 
     def build_excerpt(self, parent):
+        # width=1 on purpose. A Text asks for 80 characters by default, and the
+        # margin below is added on top of that, so the pane would demand more
+        # room every time it was widened and the sash would spring back. The
+        # widget fills its pane, so the number it asks for does not matter.
         self.excerpt = tk.Text(parent, wrap="word", relief="flat", padx=32, pady=26,
                                bg=self.colors["paper"], fg=self.colors["paperink"],
                                highlightthickness=0, state="disabled", height=5,
+                               width=1,
                                spacing1=3, spacing2=4, spacing3=9, cursor="arrow")
         self.excerpt.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         # Metadata reads as machinery: mono, quiet, and held well clear
@@ -831,6 +900,25 @@ class App(tk.Tk):
         from .bookmarks import BookmarkEditor
         BookmarkEditor(self, path=path, colors=self.colors, fonts=self.fonts(),
                        on_index=self.index_pdf)
+
+    def open_library(self):
+        """Open the Charm Library on the collection this window is searching."""
+        if self.db is None:
+            self.set_status("Open an index first.")
+            return
+        from .library import CharmLibrary
+        CharmLibrary(self, self.db, colors=self.colors, fonts=self.fonts(),
+                     on_open=self.open_book_at)
+
+    def open_book_at(self, path, page):
+        """Open a PDF at a page for another window, and report where it went."""
+        how = open_pdf_at(path, page)
+        name = os.path.basename(path)
+        if how:
+            self.set_status(f"Opened {name} at page {page} with {how}.")
+        else:
+            self.set_status(f"Opened {name}. Your reader takes no page, "
+                            f"so go to page {page}.")
 
     def edit_book_bookmarks(self):
         """Open the editor on the PDF behind the book that was right clicked."""
@@ -1668,7 +1756,12 @@ class App(tk.Tk):
         self.terms = [t.strip('"') for t in re.findall(r'"([^"]+)"', terms) if " " not in t]
         for row in self.tree.get_children():
             self.tree.delete(row)
-        self.sources = {s["id"]: s for s in found}
+        # A joined result answers to every chunk it was built from, so a
+        # citation naming any of them still finds the passage.
+        self.sources = {}
+        for src in found:
+            for member in src.get("members", [src["id"]]):
+                self.sources[member] = src
         # A reader works through a book front to back, so the list follows the
         # pages. The best match is still the one the window opens on.
         in_order = sorted(found, key=lambda s: (s.get("book") or "",
@@ -1680,7 +1773,7 @@ class App(tk.Tk):
             if src.get("cited"):
                 label += "  (cross-reference)"
             self.tree.insert("", "end", iid=str(src["id"]),
-                             text=label, values=(pages,))
+                             text=src.get("book") or "", values=(label, pages))
         if found:
             best = min(found, key=lambda s: s.get("rank", 0))
             self.tree.selection_set(str(best["id"]))

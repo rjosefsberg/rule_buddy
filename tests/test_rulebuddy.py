@@ -19,7 +19,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "src"))
 
-from rulebuddy import bookmarks, contents, core, indexer   # noqa: E402
+from rulebuddy import bookmarks, charms, contents, core, indexer   # noqa: E402
 
 
 def v1_index(path, sections=3):
@@ -343,6 +343,123 @@ class ContentsPageNumbers(unittest.TestCase):
     def test_words_are_refused(self):
         with self.assertRaises(ValueError):
             bookmarks.parse_pages("four")
+
+
+CORE_BOOK = """## Archery
+Blood Without Balance
+Cost: 3m; Mins: Archery 4, Essence 1
+Type: Reflexive
+Keywords: Decisive-only
+Duration: Instant
+Prerequisite Charms: Sight Without Eyes
+Drawing upon the perfect moment to shoot, the Solar sees nothing but her target.
+Force Without Fire
+Cost: 3m; Mins: Archery 4, Essence 2
+Type: Supplemental
+Keywords: Withering-only, Mute
+Duration: Instant
+Prerequisite Charms: None
+The Solar nocks an arrow with purpose.
+"""
+
+RUN_ON_BOOK = """## Athletics
+Might of the Maiden Cost: 3m; Mins: Athletics 1, Essence 1 Type: Supplemental Keywords: Decisive-only Duration: Instant Prerequisite Charms: None
+Ten Sheaves' blessing has magnified her strength.
+"""
+
+
+class JoiningChunks(unittest.TestCase):
+    """A long section is stored in overlapping chunks and read back as one."""
+
+    def test_the_overlap_is_measured_in_lines(self):
+        self.assertEqual(core.overlap(["a", "b", "c"], ["b", "c", "d"]), 2)
+        self.assertEqual(core.overlap(["a", "b"], ["c"]), 0)
+        self.assertEqual(core.overlap([], ["a"]), 0)
+
+    def test_the_shared_lines_are_printed_once(self):
+        pieces = [{"id": 1, "page_start": 1, "page_end": 2,
+                   "text": "one\ntwo\nthree", "styles": None},
+                  {"id": 2, "page_start": 2, "page_end": 3,
+                   "text": "two\nthree\nfour", "styles": None}]
+        members = [dict(pieces[0], rank=0, cited=False)]
+        out = core.joined(members, pieces)
+        self.assertEqual(out["text"], "one\ntwo\nthree\nfour")
+        self.assertEqual(out["page_start"], 1)
+        self.assertEqual(out["page_end"], 3)
+        self.assertEqual(out["members"], [1, 2])
+
+    def test_the_styles_still_mark_the_same_words(self):
+        pieces = [{"id": 1, "page_start": 1, "page_end": 1,
+                   "text": "alpha\nbeta", "styles": '[[0,5,"b"]]'},
+                  {"id": 2, "page_start": 1, "page_end": 2,
+                   "text": "beta\ngamma", "styles": '[[5,10,"i"]]'}]
+        members = [dict(pieces[0], rank=0, cited=False)]
+        out = core.joined(members, pieces)
+        runs = json.loads(out["styles"])
+        self.assertEqual(out["text"][runs[0][0]:runs[0][1]], "alpha")
+        self.assertEqual(out["text"][runs[1][0]:runs[1][1]], "gamma")
+
+
+class CharmParsing(unittest.TestCase):
+    """Exalted sets the same block two ways, and both have to read."""
+
+    def test_a_book_that_gives_each_field_a_line(self):
+        found = charms.parse(CORE_BOOK, group="Archery")
+        self.assertEqual([c["name"] for c in found],
+                         ["Blood Without Balance", "Force Without Fire"])
+        first = found[0]
+        self.assertEqual(first["cost"], "3m")
+        self.assertEqual(first["ability"], "Archery")
+        self.assertEqual(first["rating"], 4)
+        self.assertEqual(first["essence"], 1)
+        self.assertEqual(first["type"], "Reflexive")
+        self.assertEqual(first["keywords"], "Decisive-only")
+        self.assertEqual(first["prereqs"], "Sight Without Eyes")
+        self.assertIn("perfect moment", first["text"])
+
+    def test_a_book_that_runs_the_block_onto_one_line(self):
+        found = charms.parse(RUN_ON_BOOK, group="Athletics")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["name"], "Might of the Maiden")
+        self.assertEqual(found[0]["type"], "Supplemental")
+        self.assertEqual(found[0]["essence"], 1)
+
+    def test_none_means_no_keywords(self):
+        found = charms.parse(CORE_BOOK)
+        self.assertEqual(found[1]["prereqs"], "")
+        self.assertEqual(found[1]["keywords"], "Withering-only, Mute")
+
+    def test_the_body_stops_at_the_next_charm(self):
+        found = charms.parse(CORE_BOOK)
+        self.assertNotIn("Force Without Fire", found[0]["text"])
+
+    def test_a_ligature_reads_as_letters(self):
+        block = ("Nine Ways\nCost: 1m; Mins: Dodge 2, Essence 1\n"
+                 "Type: Reﬂexive\nKeywords: None\nDuration: Instant\n"
+                 "Prerequisite Charms: None\nShe moves.\n")
+        self.assertEqual(charms.parse(block)[0]["type"], "Reflexive")
+
+    def test_a_comma_inside_brackets_does_not_split_a_keyword(self):
+        self.assertEqual(charms.split_list("Keystone (Perception, Wits), Mute"),
+                         ["Keystone (Perception, Wits)", "Mute"])
+
+    def test_a_sidebar_between_fields_is_refused(self):
+        """A field that ate a line break would swallow the page under it."""
+        broken = ("Something\nCost: 3m; Mins: Archery 4, Essence 1\n"
+                  "Type: Reflexive\n" + "A long sidebar. " * 12 +
+                  "\nKeywords: None\nDuration: Instant\n"
+                  "Prerequisite Charms: None\n")
+        self.assertEqual(charms.parse(broken), [])
+
+    def test_the_tree_comes_off_the_section_path(self):
+        self.assertEqual(charms.group_of("Chapter Six: Charms > Archery"),
+                         "Archery")
+        self.assertEqual(charms.group_of("Chapter Six > Martial Arts Charms"),
+                         "Martial Arts")
+
+    def test_mins_without_an_ability(self):
+        ability, rating, essence = charms.read_mins("Essence 3")
+        self.assertEqual((ability, rating, essence), ("", 0, 3))
 
 
 class PrivateUseLetters(unittest.TestCase):
