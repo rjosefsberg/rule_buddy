@@ -72,8 +72,21 @@ function drawShelf(books, collection) {
     // A right click acts on the card under the pointer, and never opens it.
     $("shelf-body").querySelectorAll(".book").forEach((card) => {
         card.oncontextmenu = (event) => showBookMenu(event, card);
+        addCover(card);
     });
     drawCollections();
+}
+
+/* Covers come one at a time, after the card is drawn. A shelf of them is a
+   megabyte of PNG, and the names should not wait on the pictures. */
+async function addCover(card) {
+    const uri = await api().cover(Number(card.dataset.id));
+    if (!uri) return;
+    const image = document.createElement("img");
+    image.className = "cover";
+    image.src = uri;
+    image.alt = "";
+    card.prepend(image);
 }
 
 async function drawCollections() {
@@ -402,6 +415,13 @@ async function runBookAction(what) {
         const out = await api().find_pdf(id);
         if (out.message) say(out.message);
         if (out.ok) drawShelf(out.books, $("collection").textContent);
+    } else if (what === "reimport") {
+        if (!confirm(`Rebuild ${title} from its PDF?\n\n`
+                     + "The new sections are written before the old ones go, so "
+                     + "a failure leaves the collection as it was.")) return;
+        const out = await api().reimport_book(id);
+        if (!out.started) { say(out.message || "Cannot reimport."); return; }
+        say(`Rebuilding ${out.name}…`);
     } else if (what === "remove") {
         if (!confirm(`Take ${title} out of this collection?\n\n`
                      + "Its sections stop being searchable. The PDF is not deleted."))
@@ -414,6 +434,36 @@ async function runBookAction(what) {
         if (!out.started) { if (out.message) say(out.message); return; }
         say(`Adding ${out.name}…`);
     }
+}
+
+/* --------------------------------------------------------------- the key */
+
+async function askForKey() {
+    const box = $("key-box");
+    box.returnValue = "";
+    $("key-value").value = "";
+    box.showModal();
+    await new Promise((done) => { box.onclose = done; });
+
+    if (box.returnValue === "drop") {
+        const out = await api().drop_key(true);
+        state.hasKey = out.has_key;
+        say(out.message);
+        return;
+    }
+    if (box.returnValue !== "ok") return;
+
+    const key = $("key-value").value;
+    const save = $("key-save").checked;
+    say("Checking the key…");
+    let out = await api().check_key(key, save, false);
+    if (!out.ok && out.shape) {
+        if (!confirm(`${out.message}\n\nTry it anyway?`)) { say(""); return; }
+        say("Checking the key…");
+        out = await api().check_key(key, save, true);
+    }
+    state.hasKey = !!out.has_key;
+    say(out.message);
 }
 
 /* ------------------------------------------------------------ text scaling */
@@ -693,6 +743,7 @@ function wire() {
         tab.onclick = () => showView(tab.dataset.view);
     });
     $("sash").onmousedown = dragSash;
+    $("key-btn").onclick = askForKey;
     $("text-bigger").onclick = () => scaleText(1);
     $("text-smaller").onclick = () => scaleText(-1);
     document.addEventListener("keydown", (event) => {

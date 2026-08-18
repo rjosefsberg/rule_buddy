@@ -21,6 +21,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from rulebuddy import bookmarks, charms, contents, core, indexer   # noqa: E402
 
+try:                                    # the window needs pywebview installed
+    from rulebuddy import shell         # noqa: E402
+except ImportError:
+    shell = None
+
 
 def v1_index(path, sections=3):
     """An index in the old one-book-per-file shape, before collections."""
@@ -366,6 +371,51 @@ RUN_ON_BOOK = """## Athletics
 Might of the Maiden Cost: 3m; Mins: Athletics 1, Essence 1 Type: Supplemental Keywords: Decisive-only Duration: Instant Prerequisite Charms: None
 Ten Sheaves' blessing has magnified her strength.
 """
+
+
+@unittest.skipIf(shell is None, "pywebview is not installed")
+class Rendering(unittest.TestCase):
+    """shell.render lays the style runs over the stored text, as HTML."""
+
+    def test_a_paragraph_and_a_heading(self):
+        html = shell.render("## Archery\nShe shoots.", None)
+        self.assertEqual(html, "<h3>Archery</h3><p>She shoots.</p>")
+
+    def test_a_run_becomes_a_tag(self):
+        html = shell.render("Cost: 3m", '[[0,5,"b"]]')
+        self.assertEqual(html, "<p><b>Cost:</b> 3m</p>")
+
+    def test_a_run_never_crosses_a_line(self):
+        """A tag opened on one line and closed on the next would not nest."""
+        html = shell.render("one\ntwo", '[[0,7,"b"]]')
+        self.assertEqual(html, "<p><b>one</b></p><p><b>two</b></p>")
+
+    def test_the_heading_marker_moves_its_runs(self):
+        html = shell.render("## Name", '[[3,7,"b"]]')
+        self.assertEqual(html, "<h3><b>Name</b></h3>")
+
+    def test_markup_in_the_book_is_escaped(self):
+        self.assertEqual(shell.render("a <b> & c", None), "<p>a &lt;b&gt; &amp; c</p>")
+
+    def test_blank_lines_are_dropped(self):
+        self.assertEqual(shell.render("one\n\n\ntwo", None), "<p>one</p><p>two</p>")
+
+    def test_nothing_renders_as_nothing(self):
+        self.assertEqual(shell.render("", None), "")
+        self.assertEqual(shell.render(None, None), "")
+
+
+@unittest.skipIf(shell is None, "pywebview is not installed")
+class FileNames(unittest.TestCase):
+    def test_a_collection_name_becomes_a_file_name(self):
+        self.assertEqual(shell.safe_filename('My: Books/2024'), "My Books 2024")
+
+    def test_a_name_of_nothing_still_names_something(self):
+        self.assertEqual(shell.safe_filename("   "), "Collection")
+        self.assertEqual(shell.safe_filename("..."), "Collection")
+
+    def test_a_long_name_is_cut(self):
+        self.assertEqual(len(shell.safe_filename("x" * 200)), 80)
 
 
 class JoiningChunks(unittest.TestCase):

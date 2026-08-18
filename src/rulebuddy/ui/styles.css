@@ -111,6 +111,15 @@ body {
 }
 
 .book.open { border-color: var(--accent); background: var(--quote); }
+
+.book .cover {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-bottom: 8px;
+    border-radius: 3px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
 .book h4 { margin: 0 0 4px; font-size: 0.93rem; font-weight: 600; }
 .book .meta { color: var(--muted); font: 0.79rem var(--mono); }
 .book .missing { color: var(--warn); }

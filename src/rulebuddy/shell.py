@@ -12,6 +12,7 @@ to run anywhere carries the fixed version runtime and points at it with
 WEBVIEW2_BROWSER_EXECUTABLE_FOLDER.
 """
 
+import base64
 import json
 import logging
 import os
@@ -137,6 +138,19 @@ class Api:
                  "source": r["source"], "chunks": r["chunks"],
                  "found": bool(r["source"] and os.path.exists(r["source"]))}
                 for r in rows]
+
+    def cover(self, book_id):
+        """Page one of a book as a data URI, or nothing.
+
+        The bytes are asked for one book at a time. Sending every cover with
+        every book list would carry a megabyte of PNG through the bridge each
+        time anything on the shelf changed.
+        """
+        row = self.db.execute("SELECT cover FROM books WHERE id=?",
+                              (book_id,)).fetchone()
+        if row is None or not row["cover"]:
+            return ""
+        return "data:image/png;base64," + base64.b64encode(row["cover"]).decode()
 
     # ------------------------------------------------------------ searching
 
@@ -293,6 +307,37 @@ class Api:
         return {"ok": True,
                 "message": (f"Opened {name} at page {page} with {how}." if how
                             else f"Opened {name}. Go to page {page}.")}
+
+    # ----------------------------------------------------------------- the key
+
+    def check_key(self, key, persist=False, force=False):
+        """Take a key, try it against the API, and keep it if it works.
+
+        The check costs one small request and turns a typo into a message here
+        rather than a failure at the first question.
+        """
+        key = (key or "").strip()
+        if not key:
+            return {"ok": False, "message": "No key given."}
+        # The shape check is a courtesy, not a rule: a key of another shape is
+        # still worth trying if the user says so.
+        if not force and not core.looks_like_key(key):
+            return {"ok": False, "shape": True,
+                    "message": "Anthropic keys start with sk-ant- and are long."}
+        ok, detail = core.verify_key(key)
+        if not ok:
+            return {"ok": False, "message": detail}
+        saved, where = core.set_key(key, persist=bool(persist))
+        note = "" if saved or not persist else f" It was not saved: {where}"
+        return {"ok": True, "has_key": True,
+                "message": f"Key accepted. Written answers are on.{note}"}
+
+    def drop_key(self, forget=True):
+        """Stop using the key, and take it out of config.json when asked."""
+        core.clear_key(forget=bool(forget))
+        return {"ok": True, "has_key": core.has_key(),
+                "message": "Key removed." if forget
+                           else "Key dropped for this session."}
 
     # ------------------------------------------------------- native dialogs
 
@@ -531,6 +576,24 @@ class Api:
         self.tell("indexed", {"name": os.path.basename(path),
                               "collection": core.collection_name(self.db),
                               "books": self.books()})
+
+    def reimport_book(self, book_id):
+        """Rebuild one book from its PDF, in place.
+
+        add_book writes the new rows before it drops the old ones, in one
+        transaction, so a failure leaves the collection as it was.
+        """
+        row = self.db.execute("SELECT title, source FROM books WHERE id=?",
+                              (book_id,)).fetchone()
+        if row is None:
+            return {"started": False}
+        path = row["source"]
+        if not path or not os.path.exists(path):
+            return {"started": False,
+                    "message": "That PDF is not where the index says. "
+                               "Find it first."}
+        threading.Thread(target=self.add_work, args=(path,), daemon=True).start()
+        return {"started": True, "name": os.path.basename(path)}
 
     def delete_collection(self, path):
         """Delete a whole collection file. The PDFs behind it are not touched."""
