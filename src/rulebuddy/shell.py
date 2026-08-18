@@ -15,6 +15,7 @@ WEBVIEW2_BROWSER_EXECUTABLE_FOLDER.
 import json
 import logging
 import os
+import queue
 import re
 import sys
 import threading
@@ -112,6 +113,7 @@ class Api:
         self.sources = {}
         self.terms = []
         self.history = []
+        self.events = queue.Queue()
 
     # ------------------------------------------------------------- the book
 
@@ -253,11 +255,27 @@ class Api:
         self.tell("answer", {"question": question, "text": answer["text"]})
 
     def tell(self, kind, detail):
-        """Push an event into the page. Safe from a worker thread."""
-        if not self.window:
-            return
-        payload = json.dumps({"kind": kind, **detail})
-        self.window.evaluate_js(f"window.onEvent({payload})")
+        """Hand an event to the page. Called from worker threads.
+
+        It only queues. Python must never call into the window from a worker:
+        evaluate_js and run_js both go through a synchronous cross-thread
+        Invoke in the WebView2 backend, and pythonnet holds the GIL across it.
+        While the window sits in a modal loop — which is what Windows runs for
+        the whole time a title bar is dragged — the UI thread cannot answer,
+        the worker cannot give the GIL back, and the entire process locks up.
+
+        The page pulls instead, through poll().
+        """
+        self.events.put({"kind": kind, **detail})
+
+    def poll(self):
+        """Everything that happened since the page last asked."""
+        out = []
+        while True:
+            try:
+                out.append(self.events.get_nowait())
+            except queue.Empty:
+                return out
 
     def clear(self):
         self.history = []
@@ -563,6 +581,34 @@ def quieten():
         logging.getLogger(name).setLevel(logging.CRITICAL)
 
 
+def centred(width, height):
+    """Where to put the window, as arguments for create_window.
+
+    The work area, not the whole screen, because the task bar takes a strip of
+    it. The window is told its size in the same units the work area is measured
+    in, so display scaling needs no arithmetic here: both are already scaled.
+    Anything unexpected returns nothing and lets pywebview place the window.
+    """
+    if sys.platform != "win32":
+        return {}
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        user32.SetProcessDPIAware()
+        area = wintypes.RECT()
+        if not user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0):
+            return {}                   # SPI_GETWORKAREA
+        free_w = area.right - area.left
+        free_h = area.bottom - area.top
+        if free_w < width or free_h < height:
+            return {}                   # it will not fit, so do not place it
+        return {"x": area.left + (free_w - width) // 2,
+                "y": area.top + (free_h - height) // 2}
+    except Exception:
+        return {}
+
+
 def start(db_path=None):
     """Open the window. Everything else happens in the page."""
     quieten()
@@ -573,10 +619,12 @@ def start(db_path=None):
     if not os.path.exists(path):
         sys.exit(f"No index at {path}")
 
+    width, height = 1360, 880
     api = Api(path)
     api.window = webview.create_window(
         "Rule Buddy", os.path.join(UI, "index.html"),
-        js_api=api, width=1360, height=880, min_size=(900, 600))
+        js_api=api, width=width, height=height, min_size=(900, 600),
+        **centred(width, height))
     webview.start()
 
 

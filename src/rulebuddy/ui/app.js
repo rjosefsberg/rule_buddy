@@ -148,8 +148,21 @@ async function openPdf() {
 
 /* --------------------------------------------------------------- the ask */
 
-/* Python pushes every stage of an answer through here. The page never waits
-   on a call that takes a minute. */
+/* The page pulls events; Python never calls into the window.
+
+   A call from a Python worker thread into the webview blocks on a synchronous
+   cross-thread Invoke and holds the GIL across it. While the window is being
+   dragged, Windows runs a modal loop, the UI thread cannot answer, and the
+   whole process locks up. Pulling has no such trap. */
+async function pump() {
+    try {
+        const events = await api().poll();
+        events.forEach((event) => window.onEvent(event));
+    } catch (err) {
+        /* the window is closing */
+    }
+}
+
 window.onEvent = function (event) {
     if (event.kind === "searching") {
         addTurn("Question", escape(event.question));
@@ -672,6 +685,7 @@ function wire() {
 
 window.addEventListener("pywebviewready", async () => {
     wire();
+    setInterval(pump, 150);
     const start = await api().state();
     drawShelf(start.books, start.collection);
     say(`${start.collection} · ${start.books.length} books`

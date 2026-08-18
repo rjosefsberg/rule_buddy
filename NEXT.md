@@ -3,41 +3,25 @@
 Branch `webview-ui`. The webview window works, the drive builds, and the frozen
 exe runs. Two faults stop it from replacing the Tk window.
 
-## Fault 1: the window locks up when it is moved
+## Both faults are fixed
 
-Drag the title bar and the window freezes. Windows has to kill it.
+**The lock up.** `evaluate_js` and `run_js` both end in the same place in
+`webview/platforms/edgechromium.py`:
 
-**Leading theory.** `Api.tell()` in `shell.py` calls `window.evaluate_js` from a
-worker thread. pywebview marshals that onto the UI thread and waits for the
-result. Windows runs a modal message loop while a window is dragged, so the UI
-thread cannot answer until the drag ends. The worker holds its lock, the UI
-thread is inside the drag loop, and the two wait on each other.
+    self.webview.Invoke(...)   # synchronous, onto the UI thread
+    semaphore.acquire()        # then waits for the callback
 
-This fits the evidence: the freeze needs a drag, and the window is full of
-worker threads that push events (`ask_work`, `index_work`, `add_work`,
-`check_folder`).
+pythonnet holds the GIL across that Invoke. Windows runs a modal loop for the
+whole time a title bar is dragged, so the UI thread cannot answer it, and no
+Python thread can run either. The process locks up, not just the window.
 
-**What to try, in order.**
+`tell()` now only puts the event on a queue, and the page pulls with `poll()`
+every 150ms. Python never calls into the window. Measured with the window held
+in the move loop: Python threads keep running, the UI thread keeps answering,
+and the page still talks afterwards.
 
-1. Reproduce without any worker: open the window, ask nothing, drag it. If it
-   still freezes, the theory is wrong and it is pywebview's WinForms host.
-2. Reproduce with a worker running: start an Ask, drag during "Waiting for the
-   model…". If only this freezes, the theory holds.
-3. Replace the synchronous call. pywebview 6 has a fire-and-forget path that
-   does not wait for a return value. `tell()` never uses the return value, so it
-   should not be waiting for one. Check `window.run_js` in the installed
-   version: `python -c "import webview; help(webview.Window.run_js)"`.
-4. If there is no such call, do not push from Python at all. Keep a queue on the
-   `Api` and let the page pull: a `poll()` method the page calls on a timer, or
-   a request that returns when the next event is ready. The page already handles
-   every event through `window.onEvent`, so only the transport changes.
-
-## Fault 2: the window does not open centred
-
-`create_window` is called with no `x` and `y`, so pywebview places it. It lands
-wrong. Give it a position: read the work area, subtract the window size, halve
-it. Watch for a second monitor and for display scaling, which are the usual
-reasons the sum comes out wrong.
+**The centring.** `centred()` in `shell.py` measures the work area, not the
+screen, so the task bar is allowed for.
 
 ## After those two
 
