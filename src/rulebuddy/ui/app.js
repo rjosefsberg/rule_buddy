@@ -6,6 +6,20 @@
 const $ = (id) => document.getElementById(id);
 const api = () => window.pywebview.api;
 
+/* A page that throws goes quiet and looks broken. Keep what it threw, and put
+   the first line where it can be read. */
+window.__errors = [];
+window.addEventListener("error", (event) => {
+    window.__errors.push(`${event.message} (${event.filename}:${event.lineno})`);
+    const bar = document.getElementById("status");
+    if (bar) bar.textContent = window.__errors[0];
+});
+window.addEventListener("unhandledrejection", (event) => {
+    window.__errors.push(String(event.reason));
+    const bar = document.getElementById("status");
+    if (bar) bar.textContent = window.__errors[0];
+});
+
 const state = {
     view: "search",
     pick: null,          // the chosen section id
@@ -47,10 +61,13 @@ function showView(name) {
 function drawShelf(books, collection) {
     $("collection").textContent = collection;
     $("shelf-body").innerHTML = books.map((book) => `
-        <div class="book" data-id="${book.id}" data-title="${escape(book.title)}">
+        <div class="book" data-id="${book.id}" data-title="${escape(book.title)}"
+             data-found="${book.found ? 1 : 0}"
+             title="${escape(book.source || "")}">
             <h4>${escape(book.title)}</h4>
             <div class="meta">${book.pages} pages · ${book.chunks} sections</div>
-            ${book.found ? "" : '<div class="meta missing">PDF not found</div>'}
+            ${book.found ? ""
+                : '<div class="meta missing">PDF not found · right click to find it</div>'}
         </div>`).join("");
     // A right click acts on the card under the pointer, and never opens it.
     $("shelf-body").querySelectorAll(".book").forEach((card) => {
@@ -360,6 +377,10 @@ function showBookMenu(event, card) {
     const menu = $("book-menu");
     menu.dataset.id = card.dataset.id;
     menu.dataset.title = card.dataset.title;
+    // Finding the PDF is only offered for a book whose PDF is not where the
+    // index says. It is the one thing that cannot be fixed any other way.
+    menu.querySelector('[data-do="find"]')
+        .classList.toggle("hidden", card.dataset.found === "1");
     menu.style.left = `${event.clientX}px`;
     menu.style.top = `${event.clientY}px`;
     menu.classList.remove("hidden");
@@ -377,6 +398,10 @@ async function runBookAction(what) {
         const out = await api().rename_book(id, name);
         if (out.ok) drawShelf(out.books, $("collection").textContent);
         else say(out.message);
+    } else if (what === "find") {
+        const out = await api().find_pdf(id);
+        if (out.message) say(out.message);
+        if (out.ok) drawShelf(out.books, $("collection").textContent);
     } else if (what === "remove") {
         if (!confirm(`Take ${title} out of this collection?\n\n`
                      + "Its sections stop being searchable. The PDF is not deleted."))

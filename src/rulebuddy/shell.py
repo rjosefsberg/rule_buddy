@@ -460,6 +460,41 @@ class Api:
         self.db.commit()
         return {"ok": True, "books": self.books()}
 
+    def find_pdf(self, book_id):
+        """Point a book at its PDF again, after the file moved or was renamed.
+
+        The index holds the path the book was built from. Nothing else needs
+        that file, so a book with a stale path still searches: only opening the
+        page in a reader stops working.
+        """
+        row = self.db.execute("SELECT title, source, pages FROM books WHERE id=?",
+                              (book_id,)).fetchone()
+        if row is None:
+            return {"ok": False}
+        path = self.pick_pdf()
+        if not path:
+            return {"ok": False}
+
+        # A different book at the right path helps nobody, so count the pages.
+        # It is a warning, not a refusal: a reprint can differ by a page.
+        note = ""
+        if pymupdf is not None:
+            try:
+                doc = pymupdf.open(path)
+                pages = doc.page_count
+                doc.close()
+                if row["pages"] and pages != row["pages"]:
+                    note = (f" That PDF has {pages} pages and the index was built"
+                            f" from {row['pages']}. Check it is the same book.")
+            except Exception as err:
+                return {"ok": False, "message": f"Cannot read that PDF: {err}"}
+
+        self.db.execute("UPDATE books SET source=? WHERE id=?", (path, book_id))
+        self.db.commit()
+        return {"ok": True, "books": self.books(),
+                "message": f"{row['title']} now points at "
+                           f"{os.path.basename(path)}.{note}"}
+
     def remove_book(self, book_id):
         """Take one book out. Its sections stop being searchable."""
         if len(self.books()) <= 1:
@@ -611,6 +646,15 @@ def centred(width, height):
 
 def start(db_path=None):
     """Open the window. Everything else happens in the page."""
+    # The window must own the main thread. WebView2 wants its message loop
+    # there, in a single threaded apartment. Started anywhere else it paints
+    # once and then stops answering, which reads as a frozen window rather than
+    # as a mistake. PyCharm does this when a run configuration has "Run with
+    # Python Console" ticked: the script runs inside the console's thread.
+    if threading.current_thread() is not threading.main_thread():
+        sys.exit("Rule Buddy has to start on the main thread.\n"
+                 "In PyCharm, turn off 'Run with Python Console' in the run "
+                 "configuration, or start it from a terminal: python run.py")
     quieten()
     core.load_config()
     path = db_path or core.DB["path"]
