@@ -389,23 +389,47 @@ def joined(members, pieces):
 
 # --------------------------------------------------------------- the model
 
+# Roughly 35 thousand tokens of excerpts, well inside what the model takes.
+BUDGET = 140000
+BASE_SHARE = 3000       # every section gets at least this much
+DEEP = 3                # the best few get whatever is left over
+DEEP_SHARE = 15000
+
+
+def shares(sources):
+    """How much of each section goes in the prompt.
+
+    A joined section can run to forty thousand characters, so a handful of them
+    would spend the whole budget and the rest would never be seen. Every section
+    gets a base share first, which is what puts breadth in the answer. What is
+    left goes to the best ranked few, which is what keeps the depth where the
+    answer usually is.
+    """
+    sources = list(sources)
+    if not sources:
+        return []
+    room = BUDGET - len(sources) * 120          # the headers
+    base = min(BASE_SHARE, max(600, room // len(sources)))
+    spare = room - base * len(sources)
+
+    out = []
+    for i, src in enumerate(sources):
+        take = base
+        if i < DEEP and spare > 0:
+            extra = min(DEEP_SHARE - base, spare // (DEEP - i))
+            take, spare = base + extra, spare - extra
+        out.append((src, src["text"][:take]))
+    return out
+
+
 def build_prompt(question, sources, outline):
     lines = ["Excerpts from the rulebook:\n"]
-    budget = 60000
-    for src in sources:
-        # A joined section carries a whole Charm tree, so one excerpt is much
-        # longer than a chunk was. There are fewer of them now, and the budget
-        # below still holds the whole prompt down.
-        text = src["text"][:15000]
+    for src, text in shares(sources):
         # The book has to be in the header: page 87 means nothing on its own once
         # a collection holds more than one book.
         book = f"{src['book']} — " if src.get("book") else ""
-        block = (f"[#{src['id']} p.{src['page_start']}] {book}{src['path']}"
-                 f"{' (cross-reference)' if src.get('cited') else ''}\n{text}\n")
-        if budget - len(block) < 0:
-            break
-        budget -= len(block)
-        lines.append(block)
+        lines.append(f"[#{src['id']} p.{src['page_start']}] {book}{src['path']}"
+                     f"{' (cross-reference)' if src.get('cited') else ''}\n{text}\n")
     if outline:
         lines.append("\nBook outline (top levels):\n" + outline)
     lines.append(f"\nQuestion: {question}")

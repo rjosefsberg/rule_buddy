@@ -76,7 +76,10 @@ body {
 #shelf.closed { width: 26px; }
 #shelf.closed .shelf-body, #shelf.closed .shelf-title { display: none; }
 
-#collections { flex: none; border-top: 1px solid var(--rule); padding-top: 10px; }
+/* The collections sit above the books: you pick a collection, then read what
+   is in it. The list is short, so it takes only the room it needs and the
+   books below it get the rest. */
+#collections { flex: none; border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
 #collections .book { cursor: pointer; }
 #collections .book:hover { border-color: var(--accent); }
 #collections .shelf-head { padding: 0 0 6px; font-size: 0.86rem; color: var(--muted); }
@@ -141,7 +144,23 @@ body {
     border-bottom: 1px solid var(--rule);
 }
 
-#bar .tabs { display: flex; gap: 4px; margin-right: auto; }
+#bar .tabs { display: flex; align-items: center; gap: 4px; margin-right: auto; }
+
+/* Two groups, named. The first works on the open collection, the second works
+   on any file. The gap and the rule say they are not the same kind of thing. */
+.group {
+    font-size: 0.79rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    padding-right: 4px;
+}
+
+.group.apart {
+    margin-left: 18px;
+    padding-left: 22px;
+    border-left: 1px solid var(--rule);
+}
 
 .tab {
     border: 1px solid transparent;

@@ -241,7 +241,10 @@ class Api:
                 lookup = said[-1] + " " + question
         self.tell("searching", {"question": question})
         try:
-            found = core.retrieve(self.db, lookup)
+            # An answer reads wider than a search list does. The chunks of one
+            # section join into a single source, so 60 rows is far fewer than
+            # 60 passages, and the prompt budget still decides what fits.
+            found = core.retrieve(self.db, lookup, limit=60)
         except Exception as err:
             self.tell("failed", {"message": f"Search failed: {err}"})
             return

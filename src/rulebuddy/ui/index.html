@@ -12,15 +12,20 @@
         <span class="shelf-title">Books</span>
         <button class="shelf-toggle" id="shelf-toggle" title="Hide the shelf">‹</button>
     </div>
-    <div class="shelf-body" id="shelf-body"></div>
     <div class="shelf-body" id="collections"></div>
+    <div class="shelf-body" id="shelf-body"></div>
 </aside>
 
 <div id="main">
     <div id="bar">
         <div class="tabs">
+            <!-- What the open collection answers. -->
+            <span class="group">This collection</span>
             <button class="tab on" data-view="search">Search</button>
             <button class="tab" data-view="ask">Ask</button>
+
+            <!-- Tools that work on any file, whatever is open. -->
+            <span class="group apart">Tools</span>
             <button class="tab" data-view="library">Charm Library</button>
             <button class="tab" data-view="bookmarks">Bookmarks</button>
             <button class="tab" data-view="import">Import</button>
