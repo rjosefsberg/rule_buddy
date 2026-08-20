@@ -733,7 +733,10 @@ def start(db_path=None):
     api = Api(path)
     api.window = webview.create_window(
         "Rule Buddy", os.path.join(UI, "index.html"),
-        js_api=api, width=width, height=height, min_size=(900, 600),
+        # The floor is what the tab bar needs with the shelf open: 792 pixels
+        # of buttons and 265 of shelf, measured. Below that a button would be
+        # pushed out of reach, and the page never scrolls sideways.
+        js_api=api, width=width, height=height, min_size=(1060, 640),
         **centred(width, height))
     webview.start()
 

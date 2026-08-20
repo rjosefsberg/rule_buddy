@@ -144,6 +144,23 @@ body {
     border-bottom: 1px solid var(--rule);
 }
 
+/* Nothing in the bar gives up its width. The collection name is the one part
+   that can shrink, so it takes the squeeze and clips with an ellipsis. The
+   window has a minimum size that fits the rest, so there is never a scroll
+   bar and no button is ever pushed out of reach. */
+#bar > button, #bar .tabs { flex: none; }
+
+#collection {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-align: right;
+    color: var(--muted);
+    font-size: 0.86rem;
+}
+
 #bar .tabs { display: flex; align-items: center; gap: 4px; margin-right: auto; }
 
 /* Two groups, named. The first works on the open collection, the second works
@@ -160,6 +177,20 @@ body {
     margin-left: 18px;
     padding-left: 22px;
     border-left: 1px solid var(--rule);
+}
+
+/* The labels are the first thing to go when the bar runs out of room: bigger
+   text or a narrow window. The rule between the groups stays, so the two are
+   still told apart. */
+@media (max-width: 1200px) {
+    .group { display: none; }
+    .group.apart {
+        display: block;
+        width: 0;
+        margin-left: 10px;
+        padding-left: 10px;
+        overflow: hidden;
+    }
 }
 
 .tab {
