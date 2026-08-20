@@ -17,23 +17,28 @@
 </aside>
 
 <div id="main">
-    <div id="bar">
+    <!-- Tools first: they work on any file, whatever is open. -->
+    <div class="bar tools-bar">
+        <span class="group">Tools</span>
         <div class="tabs">
-            <!-- What the open collection answers. -->
-            <span class="group">This collection</span>
-            <button class="tab on" data-view="search">Search</button>
-            <button class="tab" data-view="ask">Ask</button>
-
-            <!-- Tools that work on any file, whatever is open. -->
-            <span class="group apart">Tools</span>
             <button class="tab" data-view="library">Charm Library</button>
             <button class="tab" data-view="bookmarks">Bookmarks</button>
             <button class="tab" data-view="import">Import</button>
         </div>
-        <span id="collection"></span>
+        <span class="spacer"></span>
         <button id="key-btn" title="The API key for written answers">Key…</button>
         <button id="text-smaller" title="Smaller text (Ctrl and minus)">A−</button>
         <button id="text-bigger" title="Bigger text (Ctrl and plus)">A+</button>
+    </div>
+
+    <!-- Then the collection that is open, and what it answers. -->
+    <div class="bar book-bar">
+        <span class="group">This collection</span>
+        <div class="tabs">
+            <button class="tab on" data-view="search">Search</button>
+            <button class="tab" data-view="ask">Ask</button>
+        </div>
+        <span id="collection"></span>
     </div>
 
     <div id="panes">

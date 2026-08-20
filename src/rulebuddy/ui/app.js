@@ -408,15 +408,26 @@ function showBookMenu(event, card) {
     menu.classList.remove("hidden");
 }
 
-document.addEventListener("click", () => {
-    $("book-menu").classList.add("hidden");
-    $("collection-menu").classList.add("hidden");
+/* A menu closes on anything that is not the menu: either mouse button, a key,
+   a scroll, a resize, or the window losing focus. mousedown rather than click,
+   so it goes on the way down and never outlives what the user did next. */
+function closeMenus(event) {
+    if (event && event.target && event.target.closest(".menu")) return;
+    document.querySelectorAll(".menu").forEach((menu) =>
+        menu.classList.add("hidden"));
+}
+
+["mousedown", "contextmenu", "wheel"].forEach((name) =>
+    document.addEventListener(name, closeMenus, true));
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeMenus();
 });
+window.addEventListener("blur", () => closeMenus());
+window.addEventListener("resize", () => closeMenus());
 
 /* The name lives in the collection file, so only the open one can be renamed. */
-async function renameCollection() {
-    const menu = $("collection-menu");
-    if (menu.dataset.open !== "1") {
+async function renameCollection(isOpen) {
+    if (isOpen !== "1") {
         say("Open that collection first, then rename it.");
         return;
     }
@@ -710,6 +721,51 @@ async function checkFolder() {
     say(good ? "Name the collection, then index." : "No book here can be indexed.");
 }
 
+/* ------------------------------------------------------- column resizing */
+
+const MIN_COLUMN = 56;
+
+/* A grip on the right edge of every heading but the last.
+
+   The table lays out fixed, so the first drag freezes every column at the
+   width it already has. Without that the columns are still percentages, and
+   moving one would shift the others as well. */
+function makeResizable(table) {
+    const heads = Array.from(table.querySelectorAll("thead th"));
+    heads.slice(0, -1).forEach((th, i) => {
+        const grip = document.createElement("span");
+        grip.className = "grip";
+        th.appendChild(grip);
+        grip.onmousedown = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            heads.forEach((other) => {
+                other.style.width = `${other.getBoundingClientRect().width}px`;
+            });
+            const startX = event.clientX;
+            const startW = th.getBoundingClientRect().width;
+            const next = heads[i + 1];
+            const nextW = next.getBoundingClientRect().width;
+            const move = (e) => {
+                // What one column takes, the one beside it gives up, so the
+                // table keeps its width and nothing overflows the pane.
+                let by = e.clientX - startX;
+                by = Math.max(MIN_COLUMN - startW, Math.min(nextW - MIN_COLUMN, by));
+                th.style.width = `${startW + by}px`;
+                next.style.width = `${nextW - by}px`;
+            };
+            const stop = () => {
+                document.removeEventListener("mousemove", move);
+                document.removeEventListener("mouseup", stop);
+                document.body.classList.remove("dragging");
+            };
+            document.body.classList.add("dragging");
+            document.addEventListener("mousemove", move);
+            document.addEventListener("mouseup", stop);
+        };
+    });
+}
+
 /* --------------------------------------------------------------- the sash */
 
 function dragSash(event) {
@@ -781,10 +837,22 @@ function wire() {
         else if (event.key === "-") scaleText(-1);
         else if (event.key === "0") { scale = 0; scaleText(0); }
     });
+    // The menu holds what the action needs in its dataset, so closing it first
+    // is safe and the menu never sits open behind a dialog.
     $("book-menu").querySelectorAll("button").forEach((item) => {
-        item.onclick = () => runBookAction(item.dataset.do);
+        item.onclick = () => {
+            const what = item.dataset.do;
+            closeMenus();
+            runBookAction(what);
+        };
     });
-    $("collection-menu").querySelector("button").onclick = renameCollection;
+    $("collection-menu").querySelector("button").onclick = () => {
+        const menu = $("collection-menu");
+        const open = menu.dataset.open;
+        closeMenus();
+        renameCollection(open);
+    };
+    document.querySelectorAll("table.rows").forEach(makeResizable);
     wireBookmarks();
     wireImport();
 }

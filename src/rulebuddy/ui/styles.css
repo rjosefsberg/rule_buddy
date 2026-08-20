@@ -136,19 +136,23 @@ body {
     flex-direction: column;
 }
 
-#bar {
+.bar {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px var(--gap);
+    padding: 7px var(--gap);
     border-bottom: 1px solid var(--rule);
 }
+
+.bar.tools-bar { background: var(--quote); }
 
 /* Nothing in the bar gives up its width. The collection name is the one part
    that can shrink, so it takes the squeeze and clips with an ellipsis. The
    window has a minimum size that fits the rest, so there is never a scroll
    bar and no button is ever pushed out of reach. */
-#bar > button, #bar .tabs { flex: none; }
+.bar > button, .bar .tabs { flex: none; }
+
+.spacer { flex: 1; }
 
 #collection {
     flex: 1;
@@ -161,11 +165,13 @@ body {
     font-size: 0.86rem;
 }
 
-#bar .tabs { display: flex; align-items: center; gap: 4px; margin-right: auto; }
+.bar .tabs { display: flex; align-items: center; gap: 4px; }
 
-/* Two groups, named. The first works on the open collection, the second works
-   on any file. The gap and the rule say they are not the same kind of thing. */
+/* Two bars, named. The tools work on any file; the collection bar under them
+   works on whatever is open. */
 .group {
+    flex: none;
+    width: 8.5em;
     font-size: 0.79rem;
     text-transform: uppercase;
     letter-spacing: 0.07em;
@@ -173,24 +179,11 @@ body {
     padding-right: 4px;
 }
 
-.group.apart {
-    margin-left: 18px;
-    padding-left: 22px;
-    border-left: 1px solid var(--rule);
-}
-
 /* The labels are the first thing to go when the bar runs out of room: bigger
    text or a narrow window. The rule between the groups stays, so the two are
    still told apart. */
-@media (max-width: 1200px) {
+@media (max-width: 1060px) {
     .group { display: none; }
-    .group.apart {
-        display: block;
-        width: 0;
-        margin-left: 10px;
-        padding-left: 10px;
-        overflow: hidden;
-    }
 }
 
 .tab {
@@ -291,6 +284,24 @@ table.rows {
     border-collapse: collapse;
     table-layout: fixed;
 }
+
+/* The grip sits on the heading's right edge. The heading is the positioning
+   parent, and sticky already makes one. */
+table.rows th .grip {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 7px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 2;
+}
+
+table.rows th .grip:hover { background: var(--accent); }
+
+/* While a column is being dragged the pointer stays a resize arrow, and no
+   text under it gets selected. */
+body.dragging { cursor: col-resize; user-select: none; }
 
 table.rows th {
     position: sticky;
