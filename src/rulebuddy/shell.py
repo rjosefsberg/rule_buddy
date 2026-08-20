@@ -18,8 +18,13 @@ import logging
 import os
 import queue
 import re
+import shutil
+import subprocess
 import sys
 import threading
+import urllib.parse
+import urllib.request
+import webbrowser
 
 import webview
 
@@ -96,6 +101,72 @@ def with_runs(line, runs):
         at = end
     out.append(escape(line[at:]))
     return "".join(out)
+
+
+def pdf_viewers():
+    """Readers that take a page on the command line, best first.
+
+    Each item is (name, list of places to look, arguments before the file).
+    The page number is a PDF sequence number, which is what these readers want.
+    """
+    if sys.platform == "win32":
+        program = os.environ.get("ProgramFiles", r"C:\Program Files")
+        x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", "")
+        return [
+            ("SumatraPDF",
+             [os.path.join(local, r"SumatraPDF\SumatraPDF.exe"),
+              os.path.join(program, r"SumatraPDF\SumatraPDF.exe")],
+             lambda page: ["-reuse-instance", "-page", str(page)]),
+            ("Acrobat",
+             [os.path.join(x86, r"Adobe\Acrobat Reader DC\Reader\AcroRd32.exe"),
+              os.path.join(program, r"Adobe\Acrobat DC\Acrobat\Acrobat.exe")],
+             lambda page: ["/A", f"page={page}"]),
+        ]
+    if sys.platform == "darwin":
+        return []                       # Preview takes no page from the shell
+    return [
+        ("Evince", ["evince"], lambda page: [f"--page-index={page}"]),
+        ("Okular", ["okular"], lambda page: ["-p", str(page)]),
+        ("Zathura", ["zathura"], lambda page: ["-P", str(page)]),
+    ]
+
+
+def open_pdf_at(path, page):
+    """Open a PDF at a page. Return the reader used, or None if the page is lost.
+
+    A PDF reader is not required to take a page number, and the system default
+    on Windows never does. So try the readers that do, then a browser, which
+    honours the #page fragment. The last try opens the file at page one.
+    """
+    for name, places, arguments in pdf_viewers():
+        for place in places:
+            exe = place if os.path.isfile(place) else shutil.which(place)
+            if not exe:
+                continue
+            try:
+                subprocess.Popen([exe] + arguments(page) + [path])
+                return name
+            except OSError:
+                break                   # this reader is there but will not run
+
+    url = urllib.parse.urljoin("file:", urllib.request.pathname2url(
+        os.path.abspath(path))) + f"#page={page}"
+    try:
+        if webbrowser.open(url):
+            return "your browser"
+    except webbrowser.Error:
+        pass
+
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(path)
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open",
+                              path])
+    except OSError:
+        pass
+    return None
 
 
 def safe_filename(name):
@@ -302,7 +373,6 @@ class Api:
     # -------------------------------------------------------------- the PDF
 
     def open_pdf(self, path, page):
-        from .app import open_pdf_at        # the reader chain, unchanged
         if not path or not os.path.exists(path):
             return {"ok": False, "message": "That PDF is not where the index says."}
         how = open_pdf_at(path, int(page))

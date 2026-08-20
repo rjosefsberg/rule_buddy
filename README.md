@@ -217,8 +217,7 @@ rule_buddy/
     indexer.py             PDF extraction, chunking, index building, the CLI
     contents.py            reads an outline from a printed contents page
     charms.py              reads the Charm library out of the sections
-    app.py                 the old Tk window, kept for --tk
-    bookmarks.py           the old Tk Bookmark Editor
+    bookmarks.py           outline parsing for the Bookmarks tab
     assets/rulebuddy.ico
 ```
 

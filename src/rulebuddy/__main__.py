@@ -73,22 +73,11 @@ def main():
                      "try again.")
         db = core.DB["path"] = spare
 
-    # The webview window is the one that is built and shipped. The Tk window is
-    # kept for a machine with no WebView2, and for --tk while the port settles.
-    if "--tk" not in sys.argv:
-        try:
-            from . import shell
-            shell.start(db)
-            return
-        except ImportError:
-            pass                        # no pywebview here, so fall back
-        except Exception as err:
-            complain("The window could not open.\n\n"
-                     f"{type(err).__name__}: {err}\n\n"
-                     "This needs WebView2, which ships with Microsoft Edge.")
-
-    from .app import App
-    App(db, core.CONFIG["model"]).mainloop()
+    try:
+        from . import shell
+    except ImportError as err:
+        complain(f"The window needs pywebview.\n\n{err}\n\npip install pywebview")
+    shell.start(db)
 
 
 if __name__ == "__main__":

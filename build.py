@@ -43,12 +43,8 @@ def build_exe():
         "--collect-all", "webview",
         "--collect-all", "clr_loader",
         "--collect-all", "pythonnet",
-        # These are imported inside a method, so the analysis can miss them.
-        # A missing module would only show when a user opens a tool.
+        # shell is imported inside a function, so the analysis can miss it.
         "--hidden-import", "rulebuddy.shell",
-        "--hidden-import", "rulebuddy.bookmarks",
-        "--hidden-import", "rulebuddy.contents",
-        "--hidden-import", "rulebuddy.charms",
         "--distpath", os.path.join(WORK, "dist"),
         "--workpath", os.path.join(WORK, "work"),
         "--specpath", WORK,
