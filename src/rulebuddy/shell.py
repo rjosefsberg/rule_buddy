@@ -19,6 +19,7 @@ import os
 import queue
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -703,9 +704,29 @@ class Api:
         out = []
         for name in names:
             full = os.path.abspath(os.path.join(folder, name))
-            out.append({"path": full, "name": os.path.splitext(name)[0],
+            out.append({"path": full, "name": self.name_of(full),
                         "open": os.path.normcase(full) == here})
         return out
+
+    def name_of(self, path):
+        """What a collection calls itself, else its file name.
+
+        The name is a row in the file, so a renamed collection has to be read
+        rather than guessed from the path it happens to sit at.
+        """
+        if os.path.normcase(path) == os.path.normcase(
+                os.path.abspath(core.DB["path"])):
+            return core.collection_name(self.db)
+        try:
+            other = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            row = other.execute(
+                "SELECT value FROM meta WHERE key='name'").fetchone()
+            other.close()
+            if row and row[0]:
+                return row[0]
+        except sqlite3.Error:
+            pass
+        return os.path.splitext(os.path.basename(path))[0]
 
     # ------------------------------------------------------------ the library
 

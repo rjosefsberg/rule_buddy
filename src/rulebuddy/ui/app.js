@@ -99,6 +99,15 @@ async function drawCollections() {
             </div>`).join("");
     $("collections").querySelectorAll(".book").forEach((card) => {
         card.onclick = () => openCollection(card.dataset.path);
+        card.oncontextmenu = (event) => {
+            event.preventDefault();
+            const menu = $("collection-menu");
+            menu.dataset.path = card.dataset.path;
+            menu.dataset.open = card.classList.contains("open") ? "1" : "0";
+            menu.style.left = `${event.clientX}px`;
+            menu.style.top = `${event.clientY}px`;
+            menu.classList.remove("hidden");
+        };
     });
 }
 
@@ -399,7 +408,27 @@ function showBookMenu(event, card) {
     menu.classList.remove("hidden");
 }
 
-document.addEventListener("click", () => $("book-menu").classList.add("hidden"));
+document.addEventListener("click", () => {
+    $("book-menu").classList.add("hidden");
+    $("collection-menu").classList.add("hidden");
+});
+
+/* The name lives in the collection file, so only the open one can be renamed. */
+async function renameCollection() {
+    const menu = $("collection-menu");
+    if (menu.dataset.open !== "1") {
+        say("Open that collection first, then rename it.");
+        return;
+    }
+    const name = await askLine("Name for this collection:",
+                               $("collection").textContent);
+    if (!name) return;
+    const out = await api().rename_collection(name);
+    if (!out.ok) { say(out.message); return; }
+    $("collection").textContent = out.collection;
+    drawCollections();
+    say(`Renamed to ${out.collection}.`);
+}
 
 async function runBookAction(what) {
     const menu = $("book-menu");
@@ -755,6 +784,7 @@ function wire() {
     $("book-menu").querySelectorAll("button").forEach((item) => {
         item.onclick = () => runBookAction(item.dataset.do);
     });
+    $("collection-menu").querySelector("button").onclick = renameCollection;
     wireBookmarks();
     wireImport();
 }

@@ -214,7 +214,7 @@ body {
 /* The split. The left pane is a percentage of the row and nothing else gets
    a say: min-width: 0 stops its contents putting a floor under it. */
 #left {
-    flex: 0 0 var(--split, 40%);
+    flex: 0 0 var(--split, 50%);
     min-width: 200px;
     display: flex;
     flex-direction: column;
