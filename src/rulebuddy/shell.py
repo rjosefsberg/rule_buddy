@@ -801,6 +801,46 @@ def centred(width, height):
         return {}
 
 
+def clear_stuck_instance():
+    """Kill a frozen previous run before it blocks this one.
+
+    WebView2 locks its profile folder for as long as the owning process
+    lives. A run that freezes on start never releases that lock, so the
+    next launch hangs behind it too, and the freeze looks random because it
+    only bites every other launch. A PID file names the last run; if that
+    process is still alive but not pumping its message loop, it is the
+    frozen one, and killing its whole tree frees the lock for us.
+    """
+    lock = os.path.join(core.app_dir(), "rulebuddy.pid")
+    try:
+        with open(lock) as f:
+            old_pid = int(f.read().strip())
+    except (OSError, ValueError):
+        old_pid = None
+    if old_pid and old_pid != os.getpid():
+        try:
+            listed = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {old_pid}"],
+                capture_output=True, text=True, timeout=5).stdout
+            if str(old_pid) in listed:
+                check = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"(Get-Process -Id {old_pid} "
+                     "-ErrorAction SilentlyContinue).Responding"],
+                    capture_output=True, text=True, timeout=5)
+                if check.stdout.strip().lower() == "false":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(old_pid)],
+                        capture_output=True, timeout=5)
+        except Exception:
+            pass                     # unsure beats blocking a normal start
+    try:
+        with open(lock, "w") as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        pass
+
+
 def start(db_path=None):
     """Open the window. Everything else happens in the page."""
     # The window must own the main thread. WebView2 wants its message loop
@@ -814,6 +854,7 @@ def start(db_path=None):
                  "configuration, or start it from a terminal: python run.py")
     quieten()
     core.load_config()
+    clear_stuck_instance()
     path = db_path or core.DB["path"]
     if not os.path.isabs(path):
         path = os.path.join(core.app_dir(), path)
@@ -829,7 +870,13 @@ def start(db_path=None):
         # pushed out of reach, and the page never scrolls sideways.
         js_api=api, width=width, height=height, min_size=(1060, 640),
         **centred(width, height))
-    webview.start()
+    # Left at its default, pywebview's cache folder is an unreferenced
+    # tempfile.TemporaryDirectory() that can be garbage-collected and deleted
+    # moments after creation, right as WebView2 tries to use it. That race is
+    # what a launch soon after closing was hitting. A fixed folder of our own
+    # removes the race; clear_stuck_instance() above still handles a frozen
+    # prior run holding it.
+    webview.start(storage_path=os.path.join(core.app_dir(), ".webview2"))
 
 
 if __name__ == "__main__":
