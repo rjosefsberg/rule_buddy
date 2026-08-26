@@ -441,6 +441,15 @@ async function renameCollection(isOpen) {
     say(`Renamed to ${out.collection}.`);
 }
 
+async function deleteCollection(path) {
+    if (!confirm("Delete this collection?\n\n"
+                + "This removes the index only. The PDFs stay where they are."))
+        return;
+    const out = await api().delete_collection(path);
+    say(out.message);
+    if (out.ok) drawCollections();
+}
+
 async function runBookAction(what) {
     const menu = $("book-menu");
     const id = Number(menu.dataset.id);
@@ -846,12 +855,16 @@ function wire() {
             runBookAction(what);
         };
     });
-    $("collection-menu").querySelector("button").onclick = () => {
-        const menu = $("collection-menu");
-        const open = menu.dataset.open;
-        closeMenus();
-        renameCollection(open);
-    };
+    $("collection-menu").querySelectorAll("button").forEach((item) => {
+        item.onclick = () => {
+            const menu = $("collection-menu");
+            const path = menu.dataset.path;
+            const open = menu.dataset.open;
+            closeMenus();
+            if (item.dataset.do === "delete-collection") deleteCollection(path);
+            else renameCollection(open);
+        };
+    });
     document.querySelectorAll("table.rows").forEach(makeResizable);
     wireBookmarks();
     wireImport();

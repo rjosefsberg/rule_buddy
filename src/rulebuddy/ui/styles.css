@@ -73,8 +73,9 @@ body {
     background: var(--chrome);
 }
 
-#shelf.closed { width: 26px; }
+#shelf.closed { width: 34px; }
 #shelf.closed .shelf-body, #shelf.closed .shelf-title { display: none; }
+#shelf.closed .shelf-head { justify-content: center; padding: 10px 0; }
 
 /* The collections sit above the books: you pick a collection, then read what
    is in it. The list is short, so it takes only the room it needs and the
@@ -95,13 +96,23 @@ body {
 .shelf-title { flex: 1; min-width: 0; }
 
 .shelf-toggle {
-    border: 0;
-    background: none;
-    color: var(--muted);
-    font-size: 1.14rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 1.3rem;
+    line-height: 1;
+    padding: 0;
     cursor: pointer;
-    padding: 0 4px;
+    width: 26px;
+    height: 26px;
+    flex: none;
 }
+
+.shelf-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
 .shelf-body { overflow-y: auto; padding: 0 10px 10px; }
 
