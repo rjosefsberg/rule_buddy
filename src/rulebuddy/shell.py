@@ -23,6 +23,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -50,6 +51,20 @@ def ui_dir():
 
 UI = ui_dir()
 MAX_BYTES = 250 * 1_000_000
+
+_START = time.monotonic()
+
+
+def trace(label):
+    """A startup checkpoint on stdout, with the time since launch.
+
+    Startup crosses process boundaries (tasklist, powershell, WebView2 init)
+    where a debugger cannot follow, and the window looks the same whether it
+    is working or stuck. A running elapsed time next to each step is the
+    fastest way to see which one is slow, from a console with no other
+    output competing for it.
+    """
+    print(f"TRACE {time.monotonic() - _START:6.2f}s  {label}", flush=True)
 
 
 TAGS = {"b": ("<b>", "</b>"), "i": ("<i>", "</i>"), "x": ("<b><i>", "</i></b>")}
@@ -180,25 +195,37 @@ class Api:
     """Everything the page can ask for. One method, one answer, no surprises."""
 
     def __init__(self, db_path):
+        trace("Api.__init__ start")
         core.DB["path"] = db_path
         self.db = core.connect()
+        trace("Api.__init__ connected")
         self.window = None
         self.sources = {}
         self.terms = []
         self.history = []
         self.events = queue.Queue()
+        trace("Api.__init__ done")
 
     # ------------------------------------------------------------- the book
 
     def state(self):
         """What the window needs to draw itself the first time."""
+        trace("state() start")
+        collection = core.collection_name(self.db)
+        trace("state() collection_name done")
+        books = self.books()
+        trace("state() books() done")
+        has_key = core.has_key()
+        trace("state() has_key done")
+        charm_count = charms.counted(self.db)
+        trace("state() charms.counted done")
         return {
-            "collection": core.collection_name(self.db),
+            "collection": collection,
             "path": core.DB["path"],
-            "books": self.books(),
-            "has_key": core.has_key(),
+            "books": books,
+            "has_key": has_key,
             "model": core.CONFIG["model"],
-            "charms": charms.counted(self.db),
+            "charms": charm_count,
         }
 
     def books(self):
@@ -854,7 +881,9 @@ def start(db_path=None):
                  "configuration, or start it from a terminal: python run.py")
     quieten()
     core.load_config()
+    trace("start() before clear_stuck_instance")
     clear_stuck_instance()
+    trace("start() after clear_stuck_instance")
     path = db_path or core.DB["path"]
     if not os.path.isabs(path):
         path = os.path.join(core.app_dir(), path)
@@ -870,13 +899,30 @@ def start(db_path=None):
         # pushed out of reach, and the page never scrolls sideways.
         js_api=api, width=width, height=height, min_size=(1060, 640),
         **centred(width, height))
+    trace("start() window created")
     # Left at its default, pywebview's cache folder is an unreferenced
     # tempfile.TemporaryDirectory() that can be garbage-collected and deleted
     # moments after creation, right as WebView2 tries to use it. That race is
     # what a launch soon after closing was hitting. A fixed folder of our own
     # removes the race; clear_stuck_instance() above still handles a frozen
     # prior run holding it.
-    webview.start(storage_path=os.path.join(core.app_dir(), ".webview2"))
+    #
+    # The folder also grows with every launch: history, favicons, cache, and
+    # a LevelDB store per browser feature, none of which this app reads back.
+    # WebView2 opens and checks all of it on every start, so a long-lived
+    # profile makes launches slower over time. Wiping it first keeps startup
+    # at its fastest, at the cost of any caching WebView2 could have reused.
+    storage_path = os.path.join(core.app_dir(), ".webview2")
+    shutil.rmtree(storage_path, ignore_errors=True)
+    # A relaunch soon after closing can hang inside WebView2's GPU process
+    # instead of finishing init, even against a freshly wiped profile. This
+    # turns off GPU acceleration for the browser WebView2 spawns, which is
+    # the standard workaround for that hang; the window still draws, just
+    # through software rendering instead of the GPU.
+    os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu")
+    trace("start() calling webview.start")
+    webview.start(storage_path=storage_path)
+    trace("start() webview.start returned")
 
 
 if __name__ == "__main__":

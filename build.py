@@ -120,9 +120,6 @@ def assemble(books, strip_key):
         print("  WebView2 runtime: not carried. The machine must have Edge.")
 
     db, has_key = write_config(strip_key)
-    readme = os.path.join(ROOT, "READ ME FIRST.txt")
-    if os.path.exists(readme):
-        shutil.copy(readme, os.path.join(DRIVE, "READ ME FIRST.txt"))
     return db, has_key
 
 
