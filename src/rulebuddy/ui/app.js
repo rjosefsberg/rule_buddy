@@ -1,10 +1,29 @@
-/* app.js - the page. Every fact comes from Python through window.pywebview.api.
+/* app.js - the page. Every fact comes from Python, over one POST per call.
 
    Nothing here holds state that Python already holds. The page asks, draws
-   what it gets, and asks again. */
+   what it gets, and asks again.
+
+   api().whatever(a, b) used to reach Python through a webview bridge. It
+   now posts to /api/whatever with [a, b] as the JSON body and unwraps the
+   {result} or {error} that comes back, but every call site above this line
+   still reads the same way, because the shape of the call did not change. */
 
 const $ = (id) => document.getElementById(id);
-const api = () => window.pywebview.api;
+
+async function call(name, args) {
+    const res = await fetch(`/api/${name}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(args),
+    });
+    const body = await res.json();
+    if (body.error) throw new Error(body.error);
+    return body.result;
+}
+
+const api = () => new Proxy({}, {
+    get: (_, name) => (...args) => call(name, args),
+});
 
 /* A page that throws goes quiet and looks broken. Keep what it threw, and put
    the first line where it can be read. */
@@ -870,7 +889,7 @@ function wire() {
     wireImport();
 }
 
-window.addEventListener("pywebviewready", async () => {
+async function boot() {
     wire();
     setInterval(pump, 150);
     const start = await api().state();
@@ -878,4 +897,10 @@ window.addEventListener("pywebviewready", async () => {
     say(`${start.collection} · ${start.books.length} books`
         + (start.charms ? ` · ${start.charms} charms` : ""));
     $("terms").focus();
-});
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+} else {
+    boot();
+}

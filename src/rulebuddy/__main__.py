@@ -25,21 +25,6 @@ def complain(message):
     sys.exit(1)
 
 
-def find_webview2(base):
-    """Point at the runtime on the drive, when one travels with us.
-
-    A machine with Edge already has WebView2. A machine without it has nothing
-    to draw the window with, so the drive can carry the fixed version runtime
-    in WebView2/ beside the exe. The environment variable is how the loader is
-    told to use it.
-    """
-    if os.environ.get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"):
-        return                              # the user already chose one
-    carried = os.path.join(base, "WebView2")
-    if os.path.isdir(carried):
-        os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = carried
-
-
 def first_index(shelf):
     """Any index on the shelf, by name. Returns a full path, or None."""
     try:
@@ -55,7 +40,6 @@ def main():
     base = core.app_dir()
     os.chdir(base)
     core.load_config()
-    find_webview2(base)
 
     db = core.DB["path"]
     if not os.path.isabs(db):
@@ -73,11 +57,8 @@ def main():
                      "try again.")
         db = core.DB["path"] = spare
 
-    try:
-        from . import shell
-    except ImportError as err:
-        complain(f"The window needs pywebview.\n\n{err}\n\npip install pywebview")
-    shell.start(db)
+    from . import server
+    server.start(db)
 
 
 if __name__ == "__main__":

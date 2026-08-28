@@ -22,9 +22,11 @@ for a written answer.
 
 ## The window
 
-The window is drawn by the system webview, so the interface is HTML and CSS and
-the whole back end stays Python. On Windows that is WebView2, which ships with
-Microsoft Edge. Five tabs: Search, Ask, Charm Library, Bookmarks, and Import.
+Rule Buddy is a local web app: it starts a small HTTP server on your own
+machine and opens it in your default browser. The interface is HTML and CSS,
+the whole back end stays Python, and closing the tab does not need to be
+followed by anything — no process it started outlives that tab. Five tabs:
+Search, Ask, Charm Library, Bookmarks, and Import.
 
 ## Two modes
 
@@ -40,9 +42,8 @@ the passage.
 ## Requirements
 
 - Python 3.14+
-- `pywebview`, and WebView2 on Windows. WebView2 ships with Edge, so a machine
-  with Edge already has it. A drive that must run anywhere carries the fixed
-  version runtime in `WebView2/`; see the build section.
+- A browser. Rule Buddy opens your default one; nothing else is needed to
+  draw the window.
 - `pymupdf`, to index a PDF. Searching an index built elsewhere does not need it.
 - A bookmarked PDF of the rulebook. The outline is what section splitting relies
   on; a PDF without one will index poorly.
@@ -167,13 +168,12 @@ pip install pyinstaller
 python build.py
 ```
 
-The page in `ui/` travels with the exe as data, and `pywebview` and its .NET
-loader are collected with it. A machine with Edge already has WebView2; to cover
-a machine without it, download the WebView2 **fixed version** runtime cab from
-Microsoft, expand it into `WebView2/` at the project root, and the build copies
-it onto the drive.
+The page in `ui/` travels with the exe as data. The exe still needs a browser
+on the machine it runs on — any modern one, since the page is plain HTML and
+CSS — but nothing has to be bundled or carried on the drive for that, unlike
+the old WebView2 runtime.
 
-That produces `RuleBuddy-Drive/`, ready to copy onto a jump drive: a READ ME and
+That produces `dist/`, ready to copy onto a jump drive: a READ ME and
 a `Rule Buddy` folder holding the exe, its `_internal` directory, `config.json`
 and `books/`. All four have to travel together — the exe alone will not start.
 
@@ -211,7 +211,8 @@ rule_buddy/
   books/                   the .db indexes, one per system
   src/rulebuddy/
     __main__.py            python -m rulebuddy
-    shell.py               the window: the Api the page calls
+    server.py              the local HTTP server that opens the browser tab
+    shell.py               the Api the page calls, served by server.py
     ui/                    index.html, styles.css, app.js
     core.py                retrieval and the API call
     indexer.py             PDF extraction, chunking, index building, the CLI
