@@ -6,7 +6,7 @@
     python build.py --books exalted.db   only these collections
     python build.py --skip-exe           reassemble the folder, no rebuild
 
-Produces RuleBuddy-Drive/, which holds the READ ME and a "Rule Buddy" folder:
+Produces dist/, which holds the READ ME and a "Rule Buddy" folder:
 the exe, its _internal directory, config.json and books/. All four have to
 travel together.
 """
@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DRIVE = os.path.join(ROOT, "RuleBuddy-Drive")
+DRIVE = os.path.join(ROOT, "dist")
 APP = os.path.join(DRIVE, "Rule Buddy")
 WORK = os.path.join(ROOT, "build_out")
 NAME = "Rule Buddy"
@@ -38,12 +38,11 @@ def build_exe():
         "--name", NAME, "--icon", ICON, "--paths", os.path.join(ROOT, "src"),
         "--collect-all", "pymupdf",
         # The window is HTML, so the page has to travel with the exe. Without
-        # this the window opens on a blank white rectangle.
+        # this the browser tab opens on a blank white rectangle.
         "--add-data", f"{os.path.join(ROOT, 'src', 'rulebuddy', 'ui')}{os.pathsep}rulebuddy/ui",
-        "--collect-all", "webview",
-        "--collect-all", "clr_loader",
-        "--collect-all", "pythonnet",
-        # shell is imported inside a function, so the analysis can miss it.
+        # server and shell are imported inside a function, so the analysis
+        # can miss them.
+        "--hidden-import", "rulebuddy.server",
         "--hidden-import", "rulebuddy.shell",
         "--distpath", os.path.join(WORK, "dist"),
         "--workpath", os.path.join(WORK, "work"),
@@ -108,16 +107,6 @@ def assemble(books, strip_key):
     for book in books:
         shutil.copy(book, os.path.join(APP, "books", os.path.basename(book)))
         print(f"  book: {os.path.basename(book)}")
-
-    # A machine with Edge already has WebView2. Drop the fixed version runtime
-    # in WebView2/ at the project root and it travels with the drive, so the
-    # window opens on a machine that has neither.
-    runtime = os.path.join(ROOT, "WebView2")
-    if os.path.isdir(runtime):
-        shutil.copytree(runtime, os.path.join(APP, "WebView2"), dirs_exist_ok=True)
-        print(f"  WebView2 runtime: {folder_size(runtime):.0f} MB")
-    else:
-        print("  WebView2 runtime: not carried. The machine must have Edge.")
 
     db, has_key = write_config(strip_key)
     return db, has_key

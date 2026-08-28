@@ -4,8 +4,6 @@ version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
     "pymupdf>=1.28.2",
-    # The window. On Windows this needs WebView2, which ships with Edge.
-    "pywebview>=6.2",
 ]
 
 [project.scripts]

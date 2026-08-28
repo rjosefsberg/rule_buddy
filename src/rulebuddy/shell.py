@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""shell.py - the window, drawn by the system webview instead of by Tk.
+"""shell.py - the back end, served to an ordinary browser tab by server.py.
 
 Python keeps the whole back end. The page in ui/ draws the interface, and it
-calls the methods of `Api` below. Nothing in core.py, indexer.py, charms.py or
-contents.py knows this file exists.
+calls the methods of `Api` below, now over HTTP instead of a webview bridge.
+Nothing in core.py, indexer.py, charms.py or contents.py knows this file
+exists.
 
     python -m rulebuddy.shell
 
-The window needs WebView2 on Windows, which ships with Edge. A drive that has
-to run anywhere carries the fixed version runtime and points at it with
-WEBVIEW2_BROWSER_EXECUTABLE_FOLDER.
+started this as a desktop window until WebView2 turned out to lock up on a
+fast relaunch. server.py replaced that window with a local HTTP server and a
+plain browser tab; this module still holds Api and its helpers, since the
+page's calls did not change, only how they arrive.
 """
 
 import base64
 import json
-import logging
 import os
 import queue
 import re
@@ -27,8 +28,6 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
-
-import webview
 
 from . import bookmarks, charms, contents, core
 
@@ -58,11 +57,12 @@ _START = time.monotonic()
 def trace(label):
     """A startup checkpoint on stdout, with the time since launch.
 
-    Startup crosses process boundaries (tasklist, powershell, WebView2 init)
-    where a debugger cannot follow, and the window looks the same whether it
+    Startup crosses process boundaries (the browser, a subprocess dialog)
+    where a debugger cannot follow, and the page looks the same whether it
     is working or stuck. A running elapsed time next to each step is the
     fastest way to see which one is slow, from a console with no other
-    output competing for it.
+    output competing for it. Kept permanently, not just while debugging one
+    freeze: the next stall will not announce itself either.
     """
     print(f"TRACE {time.monotonic() - _START:6.2f}s  {label}", flush=True)
 
@@ -443,16 +443,31 @@ class Api:
     # ------------------------------------------------------- native dialogs
 
     def pick_pdf(self):
-        """The system file dialog. This is why the window is a webview and not
-        a browser tab: a page can never learn a path on disk."""
-        picked = self.window.create_file_dialog(
-            webview.OPEN_DIALOG, allow_multiple=False,
-            file_types=("PDF rulebook (*.pdf)",))
-        return picked[0] if picked else ""
+        """The system file dialog.
+
+        A page in a browser tab can never learn a path on disk on its own,
+        even one served by our own local process. Tk's file dialog is the
+        native picker running in the server process instead, which can.
+        """
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        picked = filedialog.askopenfilename(
+            filetypes=[("PDF rulebook", "*.pdf")])
+        root.destroy()
+        return picked or ""
 
     def pick_folder(self):
-        picked = self.window.create_file_dialog(webview.FOLDER_DIALOG)
-        return picked[0] if picked else ""
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        picked = filedialog.askdirectory()
+        root.destroy()
+        return picked or ""
 
     # ------------------------------------------------------------- bookmarks
 
@@ -790,140 +805,10 @@ class Api:
 
 
 def quieten():
-    """Stop pywebview printing COM faults it has already handled.
-
-    It probes WebView2 for interfaces from a newer SDK than the runtime
-    carries. Each miss is caught and logged as a stack trace, which says
-    nothing to a user and nothing to us.
-    """
-    for name in ("pywebview", "pywebview.platforms.winforms"):
-        logging.getLogger(name).setLevel(logging.CRITICAL)
-
-
-def centred(width, height):
-    """Where to put the window, as arguments for create_window.
-
-    The work area, not the whole screen, because the task bar takes a strip of
-    it. The window is told its size in the same units the work area is measured
-    in, so display scaling needs no arithmetic here: both are already scaled.
-    Anything unexpected returns nothing and lets pywebview place the window.
-    """
-    if sys.platform != "win32":
-        return {}
-    try:
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-        user32.SetProcessDPIAware()
-        area = wintypes.RECT()
-        if not user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0):
-            return {}                   # SPI_GETWORKAREA
-        free_w = area.right - area.left
-        free_h = area.bottom - area.top
-        if free_w < width or free_h < height:
-            return {}                   # it will not fit, so do not place it
-        return {"x": area.left + (free_w - width) // 2,
-                "y": area.top + (free_h - height) // 2}
-    except Exception:
-        return {}
-
-
-def clear_stuck_instance():
-    """Kill a frozen previous run before it blocks this one.
-
-    WebView2 locks its profile folder for as long as the owning process
-    lives. A run that freezes on start never releases that lock, so the
-    next launch hangs behind it too, and the freeze looks random because it
-    only bites every other launch. A PID file names the last run; if that
-    process is still alive but not pumping its message loop, it is the
-    frozen one, and killing its whole tree frees the lock for us.
-    """
-    lock = os.path.join(core.app_dir(), "rulebuddy.pid")
-    try:
-        with open(lock) as f:
-            old_pid = int(f.read().strip())
-    except (OSError, ValueError):
-        old_pid = None
-    if old_pid and old_pid != os.getpid():
-        try:
-            listed = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {old_pid}"],
-                capture_output=True, text=True, timeout=5).stdout
-            if str(old_pid) in listed:
-                check = subprocess.run(
-                    ["powershell", "-NoProfile", "-Command",
-                     f"(Get-Process -Id {old_pid} "
-                     "-ErrorAction SilentlyContinue).Responding"],
-                    capture_output=True, text=True, timeout=5)
-                if check.stdout.strip().lower() == "false":
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(old_pid)],
-                        capture_output=True, timeout=5)
-        except Exception:
-            pass                     # unsure beats blocking a normal start
-    try:
-        with open(lock, "w") as f:
-            f.write(str(os.getpid()))
-    except OSError:
-        pass
-
-
-def start(db_path=None):
-    """Open the window. Everything else happens in the page."""
-    # The window must own the main thread. WebView2 wants its message loop
-    # there, in a single threaded apartment. Started anywhere else it paints
-    # once and then stops answering, which reads as a frozen window rather than
-    # as a mistake. PyCharm does this when a run configuration has "Run with
-    # Python Console" ticked: the script runs inside the console's thread.
-    if threading.current_thread() is not threading.main_thread():
-        sys.exit("Rule Buddy has to start on the main thread.\n"
-                 "In PyCharm, turn off 'Run with Python Console' in the run "
-                 "configuration, or start it from a terminal: python run.py")
-    quieten()
-    core.load_config()
-    trace("start() before clear_stuck_instance")
-    clear_stuck_instance()
-    trace("start() after clear_stuck_instance")
-    path = db_path or core.DB["path"]
-    if not os.path.isabs(path):
-        path = os.path.join(core.app_dir(), path)
-    if not os.path.exists(path):
-        sys.exit(f"No index at {path}")
-
-    width, height = 1360, 880
-    api = Api(path)
-    api.window = webview.create_window(
-        "Rule Buddy", os.path.join(UI, "index.html"),
-        # The floor is what the tab bar needs with the shelf open: 792 pixels
-        # of buttons and 265 of shelf, measured. Below that a button would be
-        # pushed out of reach, and the page never scrolls sideways.
-        js_api=api, width=width, height=height, min_size=(1060, 640),
-        **centred(width, height))
-    trace("start() window created")
-    # Left at its default, pywebview's cache folder is an unreferenced
-    # tempfile.TemporaryDirectory() that can be garbage-collected and deleted
-    # moments after creation, right as WebView2 tries to use it. That race is
-    # what a launch soon after closing was hitting. A fixed folder of our own
-    # removes the race; clear_stuck_instance() above still handles a frozen
-    # prior run holding it.
-    #
-    # The folder also grows with every launch: history, favicons, cache, and
-    # a LevelDB store per browser feature, none of which this app reads back.
-    # WebView2 opens and checks all of it on every start, so a long-lived
-    # profile makes launches slower over time. Wiping it first keeps startup
-    # at its fastest, at the cost of any caching WebView2 could have reused.
-    storage_path = os.path.join(core.app_dir(), ".webview2")
-    shutil.rmtree(storage_path, ignore_errors=True)
-    # A relaunch soon after closing can hang inside WebView2's GPU process
-    # instead of finishing init, even against a freshly wiped profile. This
-    # turns off GPU acceleration for the browser WebView2 spawns, which is
-    # the standard workaround for that hang; the window still draws, just
-    # through software rendering instead of the GPU.
-    os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu")
-    trace("start() calling webview.start")
-    webview.start(storage_path=storage_path)
-    trace("start() webview.start returned")
+    """Kept for server.py to call: nothing pywebview-specific needs quieting
+    now, but this stays so the one import line elsewhere does not change."""
 
 
 if __name__ == "__main__":
-    start(sys.argv[1] if len(sys.argv) > 1 else None)
+    from . import server
+    server.start(sys.argv[1] if len(sys.argv) > 1 else None)
