@@ -852,8 +852,23 @@ function wire() {
         shelf.classList.toggle("closed");
         $("shelf-toggle").textContent = shelf.classList.contains("closed") ? "›" : "‹";
     };
-    document.querySelectorAll(".tab").forEach((tab) => {
+    document.querySelectorAll(".tab[data-view]").forEach((tab) => {
         tab.onclick = () => showView(tab.dataset.view);
+    });
+    // mousedown already ran closeMenus() by the time this click fires, so the
+    // menu just opens fresh each click; clicking anywhere else closes it.
+    $("exalted-menu-btn").onclick = () => {
+        const rect = $("exalted-menu-btn").getBoundingClientRect();
+        const menu = $("exalted-menu");
+        menu.style.left = `${rect.left}px`;
+        menu.style.top = `${rect.bottom}px`;
+        menu.classList.remove("hidden");
+    };
+    $("exalted-menu").querySelectorAll("button[data-view]").forEach((item) => {
+        item.onclick = () => {
+            closeMenus();
+            showView(item.dataset.view);
+        };
     });
     $("sash").onmousedown = dragSash;
     $("key-btn").onclick = askForKey;
