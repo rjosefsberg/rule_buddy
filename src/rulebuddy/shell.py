@@ -3,8 +3,8 @@
 
 Python keeps the whole back end. The page in ui/ draws the interface, and it
 calls the methods of `Api` below, now over HTTP instead of a webview bridge.
-Nothing in core.py, indexer.py, charms.py or contents.py knows this file
-exists.
+Nothing in core.py, indexer.py, exalted/charms.py or contents.py knows this
+file exists.
 
     python -m rulebuddy.shell
 
@@ -29,7 +29,8 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-from . import bookmarks, charms, contents, core
+from . import bookmarks, contents, core
+from .exalted import charms
 
 try:
     from . import indexer
@@ -802,11 +803,6 @@ class Api:
         """Read the whole collection again. The page shows a wait."""
         count = charms.build(core.connect())
         return {"count": count}
-
-
-def quieten():
-    """Kept for server.py to call: nothing pywebview-specific needs quieting
-    now, but this stays so the one import line elsewhere does not change."""
 
 
 if __name__ == "__main__":

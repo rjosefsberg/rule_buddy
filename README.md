@@ -217,7 +217,8 @@ rule_buddy/
     core.py                retrieval and the API call
     indexer.py             PDF extraction, chunking, index building, the CLI
     contents.py            reads an outline from a printed contents page
-    charms.py              reads the Charm library out of the sections
+    exalted/
+      charms.py            reads the Charm library out of the sections
     bookmarks.py           outline parsing for the Bookmarks tab
     assets/rulebuddy.ico
 ```

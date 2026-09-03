@@ -21,9 +21,11 @@
     <div class="bar tools-bar">
         <span class="group">Tools</span>
         <div class="tabs">
-            <button class="tab" data-view="library">Charm Library</button>
             <button class="tab" data-view="bookmarks">Bookmarks</button>
             <button class="tab" data-view="import">Import</button>
+        </div>
+        <div class="tabs">
+            <button class="tab game-menu-btn" id="exalted-menu-btn">Exalted ▾</button>
         </div>
         <span class="spacer"></span>
         <button id="key-btn" title="The API key for written answers">Key…</button>
@@ -215,6 +217,10 @@
 <div id="collection-menu" class="menu hidden">
     <button data-do="rename-collection">Rename this collection…</button>
     <button data-do="delete-collection">Delete this collection…</button>
+</div>
+
+<div id="exalted-menu" class="menu hidden">
+    <button data-view="library">Charm Library</button>
 </div>
 
 <dialog id="key-box">
