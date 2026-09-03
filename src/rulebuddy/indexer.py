@@ -646,8 +646,13 @@ def add_book(pdf_path, db_path, keep_heads=False, skip=(), progress=None, title=
     core.ensure_schema(db)
 
     source = os.path.abspath(pdf_path)
-    existing = db.execute("SELECT id, title FROM books WHERE source=?",
-                          (source,)).fetchone()
+    # A plain source=? match misses a book stored before a path was written
+    # with different slashes or case ("G:/..." vs "G:\..."), and Windows
+    # paths are the same file either way - so compare normalized, not exact.
+    existing = next(
+        ((row[0], row[1]) for row in db.execute("SELECT id, title, source FROM books")
+         if os.path.normcase(os.path.abspath(row[2] or "")) == os.path.normcase(source)),
+        None)
     # Replacing a book already in here keeps the name it was given, unless the
     # caller asked for a different one. The old rows go once the new ones are
     # written, so a failure partway leaves the collection as it was.
