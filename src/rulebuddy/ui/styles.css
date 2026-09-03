@@ -216,9 +216,11 @@ body {
 }
 
 /* The split. The left pane is a percentage of the row and nothing else gets
-   a say: min-width: 0 stops its contents putting a floor under it. */
+   a say: min-width: 0 stops its contents putting a floor under it. The
+   default leans wide: the left pane holds tables (Search, the Charm
+   Library), and a table needs the room more than the excerpt pane does. */
 #left {
-    flex: 0 0 var(--split, 50%);
+    flex: 0 0 var(--split, 62%);
     min-width: 200px;
     display: flex;
     flex-direction: column;
@@ -313,6 +315,10 @@ table.rows th .grip:hover { background: var(--accent); }
 /* While a column is being dragged the pointer stays a resize arrow, and no
    text under it gets selected. */
 body.dragging { cursor: col-resize; user-select: none; }
+
+table.rows th.sortable { cursor: pointer; }
+table.rows th.sortable:hover { color: var(--ink); }
+table.rows th.sortable .arrow { font-size: 0.7em; margin-left: 3px; }
 
 table.rows th {
     position: sticky;

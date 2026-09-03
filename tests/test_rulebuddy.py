@@ -19,7 +19,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "src"))
 
-from rulebuddy import bookmarks, charms, contents, core, indexer   # noqa: E402
+from rulebuddy import bookmarks, contents, core, indexer   # noqa: E402
+from rulebuddy.exalted import charms   # noqa: E402
 
 try:                                    # the window needs pywebview installed
     from rulebuddy import shell         # noqa: E402

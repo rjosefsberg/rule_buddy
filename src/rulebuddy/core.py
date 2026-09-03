@@ -223,6 +223,15 @@ def ensure_schema(db):
 PUA_BASE = 0xF0000
 PUA_MAP = {PUA_BASE + code: chr(code) for code in range(0x20, 0x7F)}
 
+# A handful of the Exalted PDFs remap one glyph, almost always their "f", into
+# the ordinary Private Use Area (U+E000-U+F8FF) instead of a real Unicode
+# point - and to a different codepoint per book, sometimes per font within
+# the same book, with no arithmetic link back to "f" the way the table above
+# has. Checked directly against the source PDFs: every codepoint in this
+# range decodes cleanly as "f" (~9,500 instances across four books), so the
+# whole block is mapped that way until a book turns up that proves otherwise.
+PUA_MAP.update({code: "f" for code in range(0xE000, 0xF900)})
+
 
 def unpua(text):
     """Put Private Use letters back to ASCII, one character for one character.
@@ -256,6 +265,23 @@ def connect():
     db = sqlite3.connect(DB["path"], check_same_thread=False)
     db.row_factory = sqlite3.Row
     ensure_schema(db)
+    return db
+
+
+CHARMS_DB_NAME = "exalted-charms.db"
+
+
+def charms_db_path():
+    """Where the Exalted Charm library lives, apart from any collection."""
+    return os.path.join(app_dir(), CONFIG["books_dir"], CHARMS_DB_NAME)
+
+
+def connect_charms():
+    """Open the Charm library, creating its file the first time it is asked for."""
+    path = charms_db_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    db = sqlite3.connect(path, check_same_thread=False)
+    db.row_factory = sqlite3.Row
     return db
 
 

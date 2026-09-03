@@ -208,7 +208,8 @@ rule_buddy/
   tests/                   python -m unittest discover -s tests
   run.py                   entry point PyInstaller builds from
   READ ME FIRST.txt        ships with the drive folder
-  books/                   the .db indexes, one per system
+  books/                   the .db indexes, one per collection, plus
+                           exalted-charms.db, the Charm library
   src/rulebuddy/
     __main__.py            python -m rulebuddy
     server.py              the local HTTP server that opens the browser tab
@@ -218,7 +219,8 @@ rule_buddy/
     indexer.py             PDF extraction, chunking, index building, the CLI
     contents.py            reads an outline from a printed contents page
     exalted/
-      charms.py            reads the Charm library out of the sections
+      charms.py            builds and searches the Charm library, its own
+                           file apart from any collection
     bookmarks.py           outline parsing for the Bookmarks tab
     assets/rulebuddy.ico
 ```

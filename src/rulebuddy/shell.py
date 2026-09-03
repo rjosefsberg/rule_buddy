@@ -199,6 +199,7 @@ class Api:
         trace("Api.__init__ start")
         core.DB["path"] = db_path
         self.db = core.connect()
+        self.charms_db = core.connect_charms()
         trace("Api.__init__ connected")
         self.window = None
         self.sources = {}
@@ -740,7 +741,8 @@ class Api:
         folder = os.path.join(core.app_dir(), core.CONFIG["books_dir"])
         try:
             names = sorted(n for n in os.listdir(folder)
-                           if n.lower().endswith(".db"))
+                           if n.lower().endswith(".db")
+                           and n != core.CHARMS_DB_NAME)
         except OSError:
             return []
         here = os.path.normcase(os.path.abspath(core.DB["path"]))
@@ -774,23 +776,24 @@ class Api:
     # ------------------------------------------------------------ the library
 
     def charm_filters(self):
-        if not charms.counted(self.db):
+        if not charms.counted(self.charms_db):
             return {"built": False}
-        top = self.db.execute("SELECT MAX(essence) FROM charms").fetchone()[0]
+        top = self.charms_db.execute(
+            "SELECT MAX(essence) FROM charms").fetchone()[0]
         return {
             "built": True,
-            "total": charms.counted(self.db),
-            "books": charms.choices(self.db, "book"),
-            "trees": charms.choices(self.db, "tree"),
-            "types": charms.choices(self.db, "type"),
-            "keywords": charms.keywords_in(self.db),
+            "total": charms.counted(self.charms_db),
+            "books": charms.choices(self.charms_db, "book"),
+            "trees": charms.choices(self.charms_db, "tree"),
+            "types": charms.choices(self.charms_db, "type"),
+            "keywords": charms.keywords_in(self.charms_db),
             "essence": list(range(1, (top or 5) + 1)),
         }
 
     def charm_search(self, filters):
         filters = filters or {}
         rows = charms.search(
-            self.db,
+            self.charms_db,
             terms=filters.get("terms", ""),
             tree=filters.get("tree", ""),
             type_=filters.get("type", ""),
@@ -800,9 +803,18 @@ class Api:
         return [dict(r) for r in rows]
 
     def build_charms(self):
-        """Read the whole collection again. The page shows a wait."""
-        count = charms.build(core.connect())
-        return {"count": count}
+        """Read every collection on the shelf and rebuild the library.
+
+        The library is its own file, so this does not touch any collection.
+        """
+        for row in self.shelf():
+            source = sqlite3.connect(f"file:{row['path']}?mode=ro", uri=True)
+            source.row_factory = sqlite3.Row
+            try:
+                charms.build(source, self.charms_db, row["path"])
+            finally:
+                source.close()
+        return {"count": charms.counted(self.charms_db)}
 
 
 if __name__ == "__main__":

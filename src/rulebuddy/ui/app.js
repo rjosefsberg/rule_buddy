@@ -44,6 +44,7 @@ const state = {
     pick: null,          // the chosen section id
     charm: null,         // the chosen charm row
     charms: [],
+    charmSort: null,     // {key, dir}, or null for the server's own order
     source: "",
     page: 0,
 };
@@ -335,7 +336,7 @@ async function loadFilters() {
         say("No Charm library yet. Press Build the library.");
         return;
     }
-    fill("f-book", filters.books);
+    fill("f-book", filters.books, prettyBook);
     fill("f-tree", filters.trees);
     fill("f-type", filters.types);
     fill("f-keyword", filters.keywords);
@@ -344,10 +345,23 @@ async function loadFilters() {
     runCharmSearch();
 }
 
-function fill(id, values) {
+function fill(id, values, labelOf) {
     $(id).innerHTML = '<option value="">Any</option>'
-        + values.map((v) => `<option>${escape(v)}</option>`).join("");
+        + values.map((v) => `<option value="${escape(v)}">`
+            + `${escape(labelOf ? labelOf(v) : v)}</option>`).join("");
     $(id).onchange = runCharmSearch;
+}
+
+/* Book titles come straight off the source PDFs' file names: hyphens for
+   spaces, a stray "(small)" from compression, and an "Ex3"/"Exalted-3e"
+   prefix that just names the game line every book here already belongs to.
+   The raw title is still what search filters on; this is display only. */
+function prettyBook(title) {
+    return (title || "")
+        .replace(/\s*\(small\)\s*$/i, "")
+        .replace(/^(EX-?3|Exalted-3e)-/i, "")
+        .replace(/-/g, " ")
+        .trim();
 }
 
 async function runCharmSearch(event) {
@@ -361,20 +375,45 @@ async function runCharmSearch(event) {
         essence: $("f-essence").value,
     });
     state.charms = rows;
+    state.charmSort = null;       // a fresh search reverts to the server's own order
+    renderCharmRows();
+    say(`${rows.length} charms.`);
+    if (rows.length) pickCharm(0);
+    else $("charm-detail").innerHTML = "";
+}
+
+function renderCharmRows() {
+    const rows = state.charms;
     $("charm-rows").innerHTML = rows.map((row, i) => `
         <tr data-i="${i}">
             <td>${escape(row.name)}</td>
             <td>${escape(row.tree)}</td>
             <td class="tag">${escape(row.cost)}</td>
             <td class="num">${row.essence || ""}</td>
+            <td>${escape(prettyBook(row.book))}</td>
             <td class="num">${row.page}</td>
         </tr>`).join("");
     $("charm-rows").querySelectorAll("tr").forEach((tr) => {
         tr.onclick = () => pickCharm(Number(tr.dataset.i));
     });
-    say(`${rows.length} charms.`);
-    if (rows.length) pickCharm(0);
-    else $("charm-detail").innerHTML = "";
+    document.querySelectorAll("#library-table th.sortable .arrow").forEach((arrow) => {
+        const th = arrow.closest("th");
+        arrow.textContent = state.charmSort && th.dataset.sort === state.charmSort.key
+            ? (state.charmSort.dir < 0 ? " ▲" : " ▼") : "";
+    });
+}
+
+/* Charm/Tree/Book headers sort the current results in place, alphabetically.
+   A second click on the same header reverses direction; the server's own
+   order (tree, essence, rating, name) comes back on the next search. */
+function sortCharms(key) {
+    const same = state.charmSort && state.charmSort.key === key;
+    const dir = same ? -state.charmSort.dir : 1;
+    state.charmSort = { key, dir };
+    const value = (row) => key === "book" ? prettyBook(row.book) : (row[key] || "");
+    state.charms = [...state.charms].sort((a, b) =>
+        value(a).localeCompare(value(b), undefined, { sensitivity: "base" }) * dir);
+    renderCharmRows();
 }
 
 function pickCharm(i) {
@@ -398,7 +437,7 @@ function pickCharm(i) {
         <p style="font-family:var(--read);font-size:16px;margin-top:16px">
             ${escape(row.text)}</p>
         <div class="head" style="font:12px var(--mono);color:var(--muted);
-             margin-top:18px">${escape(row.book || "")} · page ${row.page}</div>`;
+             margin-top:18px">${escape(prettyBook(row.book))} · page ${row.page}</div>`;
 }
 
 async function buildCharms() {
@@ -872,6 +911,12 @@ function wire() {
     });
     $("sash").onmousedown = dragSash;
     $("key-btn").onclick = askForKey;
+    // Neither button submits the form (that's the primary "Use this key"
+    // button's job, so Enter in the field reaches it), so these close the
+    // dialog by hand with the return value the code below expects.
+    $("key-cancel").onclick = () => $("key-box").close("");
+    $("key-drop").onclick = () => $("key-box").close("drop");
+    $("ask-line-cancel").onclick = () => $("ask-line").close("");
     $("text-bigger").onclick = () => scaleText(1);
     $("text-smaller").onclick = () => scaleText(-1);
     document.addEventListener("keydown", (event) => {
@@ -900,6 +945,9 @@ function wire() {
         };
     });
     document.querySelectorAll("table.rows").forEach(makeResizable);
+    document.querySelectorAll("#library-table th.sortable").forEach((th) => {
+        th.onclick = () => sortCharms(th.dataset.sort);
+    });
     wireBookmarks();
     wireImport();
 }
