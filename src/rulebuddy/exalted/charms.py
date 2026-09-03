@@ -9,8 +9,11 @@ sections already stored, and no PDF is opened again.
 Aeon calls the same thing a Power and writes it the same way, so the reader here
 is not named after Exalted.
 
-The rows live in the collection file beside the sections, which keeps a library
-with the books it came from.
+The rows live in their own file, exalted-charms.db, separate from any one
+collection. A collection's sections are only read to build the library; once
+built, deleting or reimporting that collection does not touch it. Each row
+carries its own book title and PDF path, since it can no longer join back to
+a collection's books table.
 """
 
 import re
@@ -44,6 +47,7 @@ MAX_FIELD = 90
 RATING = re.compile(r"([A-Za-z][A-Za-z /’'-]*?)\s+(\d+)")
 HEADING_MARK = "## "
 NONE_WORDS = {"none", "—", "-", "–", ""}
+SENTENCE_END = (".", "!", "?", "”", "’")
 
 
 def split_list(value):
@@ -124,12 +128,17 @@ def name_of(line):
     return name if 1 < len(name) <= MAX_NAME else ""
 
 
-def parse(text, group="", lead=""):
+def parse(text, group="", lead="", trail_source=""):
     """Read every Charm in one section's text. Returns a list of dicts.
 
     `lead` is the tail of the section before this one. A long section is stored
     in chunks, and a chunk can open on a block of statistics whose name was cut
     off by the boundary. The tail gives that name back.
+
+    `trail_source` is the raw text of the section after this one, in full. The
+    boundary can also land inside a Charm's prose, right after its stat block,
+    which leaves the last Charm in a chunk with no body at all. `lead_trail`
+    pulls that body back out of it, for the chunk-final Charm only.
     """
     text = (lead + "\n" + text) if lead else (text or "")
     found = []
@@ -148,6 +157,14 @@ def parse(text, group="", lead=""):
         if i + 1 < len(blocks):
             body = body.rstrip()
             body = body[:body.rfind("\n")] if "\n" in body else ""
+        elif trail_source and not body.strip().endswith(SENTENCE_END):
+            trail = lead_trail(trail_source, block.group(0))
+            # The overlap repeats the stat block's last field at the head of
+            # the trail. Drop that line; only the prose after it is new.
+            head, _, rest = trail.partition("\n")
+            if "Prerequisite Charms:" in head:
+                trail = rest
+            body = f"{body}\n{trail}" if body.strip() else trail
         ability, rating, essence = read_mins(block.group("mins"))
         found.append({
             "name": name,
@@ -185,6 +202,42 @@ def last_line(text):
     return lines[-1].strip() if lines else ""
 
 
+def lead_trail(text, own_header=""):
+    """The prose at the head of a section, before its first heading or Charm.
+
+    Sister to `last_line`: that gives a cut-off name back to the chunk that
+    follows it, this gives a cut-off body back to the chunk before it.
+
+    A book that never marks a Charm's name as a heading (its font carries no
+    bold or size signal the indexer can see) never triggers the `## ` stop
+    below. Stopping at the next full stat block too catches that case: a
+    complete Cost/Mins/Type/.../Prerequisite Charms run is as reliable a
+    "a new Charm starts here" signal as a heading mark, heading or not.
+
+    `own_header` is the calling Charm's own matched stat block. The overlap
+    that cut its body off can also repeat that whole block verbatim at the
+    head of the next chunk, not just its last field - that is not a new
+    Charm starting, so a block matching it is skipped rather than stopped at.
+    """
+    text = text or ""
+    if text.startswith(HEADING_MARK):
+        return ""
+    heading_at = text.find("\n" + HEADING_MARK)
+    own_header = tidy(own_header)
+    block_at, search_from = -1, 0
+    while True:
+        block = BLOCK.search(text, search_from)
+        if not block:
+            break
+        if own_header and tidy(block.group(0)) == own_header:
+            search_from = block.end()
+            continue
+        block_at = block.start()
+        break
+    stops = [p for p in (heading_at, block_at) if p != -1]
+    return text[:min(stops)] if stops else text
+
+
 def group_of(path):
     """The tree a Charm belongs to: the last part of its section path."""
     tail = (path or "").split(" > ")[-1].strip()
@@ -196,11 +249,12 @@ def group_of(path):
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS charms (
     id INTEGER PRIMARY KEY,
-    book_id INTEGER, section_id INTEGER,
+    collection TEXT, book_title TEXT, book_source TEXT,
     name TEXT, tree TEXT, ability TEXT, rating INTEGER, essence INTEGER,
     cost TEXT, mins TEXT, type TEXT, keywords TEXT, duration TEXT,
     prereqs TEXT, page INTEGER, text TEXT);
 CREATE INDEX IF NOT EXISTS charms_name ON charms(name);
+CREATE INDEX IF NOT EXISTS charms_collection ON charms(collection);
 CREATE VIRTUAL TABLE IF NOT EXISTS charms_fts USING fts5(
     name, keywords, text, content='charms', content_rowid='id',
     tokenize="unicode61 remove_diacritics 2");
@@ -212,43 +266,55 @@ def ensure_schema(db):
     db.commit()
 
 
-def build(db, progress=None):
-    """Read every section in the collection and rebuild the library.
+def build(source_db, charms_db, collection, progress=None):
+    """Read every section of one collection and rebuild its slice of the library.
+
+    `collection` identifies the collection this build is for, usually its file
+    path. Only that collection's charms are replaced, so building one
+    collection leaves every other collection's charms as they were.
 
     A long section is stored as overlapping chunks, so the same Charm can be
     read twice. The longer body wins, because the short one lost its tail to
     the chunk boundary.
     """
-    ensure_schema(db)
-    db.execute("DELETE FROM charms_fts")
-    db.execute("DELETE FROM charms")
+    ensure_schema(charms_db)
+    charms_db.execute("DELETE FROM charms WHERE collection = ?", (collection,))
 
-    rows = db.execute("SELECT id, book_id, path, page_start, text FROM sections"
-                      " ORDER BY id").fetchall()
+    books = {row["id"]: (row["title"], row["source"])
+             for row in source_db.execute("SELECT id, title, source FROM books")}
+    rows = source_db.execute("SELECT id, book_id, path, page_start, text"
+                             " FROM sections ORDER BY id").fetchall()
     best, tail = {}, {}
     for i, row in enumerate(rows):
         if progress and i % 50 == 0:
             progress("Reading the books", i, len(rows))
         lead = tail.get(row["book_id"], "")
         tail[row["book_id"]] = last_line(row["text"])
-        for charm in parse(row["text"], group_of(row["path"]), lead=lead):
+        nxt = rows[i + 1] if i + 1 < len(rows) else None
+        trail_source = (nxt["text"]
+                        if nxt and nxt["book_id"] == row["book_id"] else "")
+        for charm in parse(row["text"], group_of(row["path"]),
+                            lead=lead, trail_source=trail_source):
             key = (row["book_id"], charm["name"].lower())
             if key in best and len(best[key]["text"]) >= len(charm["text"]):
                 continue
-            charm["book_id"] = row["book_id"]
-            charm["section_id"] = row["id"]
+            title, source = books.get(row["book_id"], ("", ""))
+            charm["collection"] = collection
+            charm["book_title"] = title
+            charm["book_source"] = source
             charm["page"] = row["page_start"]
             best[key] = charm
 
-    db.executemany(
-        "INSERT INTO charms (book_id, section_id, name, tree, ability, rating,"
-        " essence, cost, mins, type, keywords, duration, prereqs, page, text)"
-        " VALUES (:book_id,:section_id,:name,:group,:ability,:rating,:essence,"
-        ":cost,:mins,:type,:keywords,:duration,:prereqs,:page,:text)",
+    charms_db.executemany(
+        "INSERT INTO charms (collection, book_title, book_source, name, tree,"
+        " ability, rating, essence, cost, mins, type, keywords, duration,"
+        " prereqs, page, text)"
+        " VALUES (:collection,:book_title,:book_source,:name,:group,:ability,"
+        ":rating,:essence,:cost,:mins,:type,:keywords,:duration,:prereqs,"
+        ":page,:text)",
         list(best.values()))
-    db.execute("INSERT INTO charms_fts (rowid, name, keywords, text)"
-               " SELECT id, name, keywords, text FROM charms")
-    db.commit()
+    charms_db.execute("INSERT INTO charms_fts(charms_fts) VALUES('rebuild')")
+    charms_db.commit()
     if progress:
         progress("Done", len(rows), len(rows))
     return len(best)
@@ -267,9 +333,8 @@ def choices(db, column):
     if column not in {"tree", "ability", "type", "book"}:
         return []
     if column == "book":
-        rows = db.execute("SELECT DISTINCT b.title FROM charms c"
-                          " JOIN books b ON b.id = c.book_id"
-                          " WHERE b.title IS NOT NULL ORDER BY b.title")
+        rows = db.execute("SELECT DISTINCT book_title FROM charms"
+                          " WHERE book_title <> '' ORDER BY book_title")
         return [r[0] for r in rows]
     rows = db.execute(f"SELECT DISTINCT {column} FROM charms"
                       f" WHERE {column} <> '' ORDER BY {column}")
@@ -287,12 +352,12 @@ def keywords_in(db):
 def search(db, terms="", tree="", type_="", keyword="", book="", essence=0):
     """Find Charms. Every filter is optional, and they narrow together."""
     where, args = [], []
-    joins = ("FROM charms c LEFT JOIN books b ON b.id = c.book_id")
+    joins = "FROM charms c"
     if terms.strip():
         joins += " JOIN charms_fts f ON f.rowid = c.id"
         where.append("charms_fts MATCH ?")
         args.append(fts_query(terms))
-    for column, value in (("c.tree", tree), ("c.type", type_), ("b.title", book)):
+    for column, value in (("c.tree", tree), ("c.type", type_), ("c.book_title", book)):
         if value:
             where.append(f"{column} = ?")
             args.append(value)
@@ -304,13 +369,17 @@ def search(db, terms="", tree="", type_="", keyword="", book="", essence=0):
         where.append("c.essence <= ?")
         args.append(int(essence))
 
-    sql = ("SELECT c.*, b.title AS book, b.source AS source " + joins
+    sql = ("SELECT c.*, c.book_title AS book, c.book_source AS source " + joins
            + (" WHERE " + " AND ".join(where) if where else "")
            + " ORDER BY c.tree, c.essence, c.rating, c.name")
     return db.execute(sql, args).fetchall()
 
 
 def fts_query(terms):
-    """Plain words, quoted, so a stray quote or hyphen cannot break the search."""
+    """Plain words, quoted, so a stray quote or hyphen cannot break the search.
+
+    Each word is a prefix match, so "revolv" finds "Revolving" without the
+    user typing the whole word out.
+    """
     words = re.findall(r"[\w’']+", terms)
-    return " ".join(f'"{w}"' for w in words) or '""'
+    return " ".join(f'"{w}"*' for w in words) or '""'
