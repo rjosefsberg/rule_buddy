@@ -108,12 +108,13 @@
                     <label>Essence up to <select id="f-essence"></select></label>
                 </div>
                 <div class="list-wrap">
-                    <table class="rows">
+                    <table class="rows" id="library-table">
                         <thead><tr>
-                            <th>Charm</th>
-                            <th style="width:26%">Tree</th>
+                            <th class="sortable" data-sort="name">Charm<span class="arrow"></span></th>
+                            <th class="sortable" data-sort="tree" style="width:22%">Tree<span class="arrow"></span></th>
                             <th style="width:86px">Cost</th>
                             <th style="width:52px">Ess</th>
+                            <th class="sortable" data-sort="book" style="width:20%">Book<span class="arrow"></span></th>
                             <th style="width:64px">Page</th>
                         </tr></thead>
                         <tbody id="charm-rows"></tbody>
@@ -231,8 +232,8 @@
         <label class="hint" style="display:flex;gap:6px;padding-top:10px">
             <input type="checkbox" id="key-save"> Save it to config.json</label>
         <div class="field" style="padding:12px 0 0;justify-content:flex-end">
-            <button value="">Cancel</button>
-            <button value="drop" id="key-drop">Remove the key</button>
+            <button type="button" id="key-cancel">Cancel</button>
+            <button type="button" id="key-drop">Remove the key</button>
             <button class="primary" value="ok">Use this key</button>
         </div>
     </form>
@@ -243,7 +244,7 @@
         <p id="ask-line-prompt"></p>
         <input type="text" id="ask-line-value" autocomplete="off">
         <div class="field" style="padding:12px 0 0;justify-content:flex-end">
-            <button value="">Cancel</button>
+            <button type="button" id="ask-line-cancel">Cancel</button>
             <button class="primary" id="ask-line-ok" value="ok">OK</button>
         </div>
     </form>
