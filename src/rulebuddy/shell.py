@@ -30,7 +30,7 @@ import urllib.request
 import webbrowser
 
 from . import bookmarks, contents, core
-from .exalted import charms
+from .exalted import charms, characters
 
 try:
     from . import indexer
@@ -200,6 +200,8 @@ class Api:
         core.DB["path"] = db_path
         self.db = core.connect()
         self.charms_db = core.connect_charms()
+        self.characters_db = core.connect_characters()
+        characters.ensure_schema(self.characters_db)
         trace("Api.__init__ connected")
         self.window = None
         self.sources = {}
@@ -742,7 +744,7 @@ class Api:
         try:
             names = sorted(n for n in os.listdir(folder)
                            if n.lower().endswith(".db")
-                           and n != core.CHARMS_DB_NAME)
+                           and n not in (core.CHARMS_DB_NAME, core.CHARACTERS_DB_NAME))
         except OSError:
             return []
         here = os.path.normcase(os.path.abspath(core.DB["path"]))
@@ -815,6 +817,170 @@ class Api:
             finally:
                 source.close()
         return {"count": charms.counted(self.charms_db)}
+
+    # -------------------------------------------------------------- characters
+
+    def character_list(self):
+        return [dict(r) for r in characters.list_characters(self.characters_db)]
+
+    def _character(self, character_id):
+        """One character, its known-Charm links resolved against the library.
+
+        A link with a charm_id is looked up fresh in exalted-charms.db every
+        time, so a fixed Charm text or a rebuilt library is never stale on a
+        character sheet; one gone missing (a renamed collection, say) is
+        dropped rather than shown broken. A link with no charm_id is a Charm
+        typed in by hand, not in the library - its own stored fields stand
+        in unchanged, with the fields only the library carries (Mins,
+        Keywords, Duration, Prerequisite Charms) left blank.
+        """
+        found = characters.get(self.characters_db, character_id)
+        if found is None:
+            return None
+        links = found.pop("charm_links")
+        charms_out = []
+        for link in links:
+            if link["charm_id"] is None:
+                charms_out.append({
+                    "id": link["id"], "charm_id": None, "manual": True,
+                    "name": link["name"] or "", "type": link["type"] or "",
+                    "cost": link["cost"] or "", "mins": "", "keywords": "",
+                    "duration": "", "prereqs": "", "text": link["text"] or "",
+                    "simple_text": None, "book": link["book"] or "",
+                    "source": "", "page": link["page"],
+                })
+                continue
+            row = self.charms_db.execute(
+                "SELECT name, type, cost, mins, keywords, duration, prereqs,"
+                " text, simple_text, book_title AS book, book_source AS source, page"
+                " FROM charms WHERE id = ?", (link["charm_id"],)).fetchone()
+            if row:
+                charms_out.append({"id": link["id"], "charm_id": link["charm_id"],
+                                   "manual": False, **dict(row)})
+        found["charms"] = charms_out
+        return found
+
+    def character_get(self, character_id):
+        found = self._character(int(character_id))
+        return found or {"ok": False, "message": "No such character."}
+
+    def character_new(self):
+        character_id = characters.create(self.characters_db)
+        return self._character(character_id)
+
+    def character_save(self, character_id, fields):
+        characters.save(self.characters_db, int(character_id), fields or {})
+        return self._character(int(character_id))
+
+    def character_delete(self, character_id):
+        characters.delete(self.characters_db, int(character_id))
+        return {"ok": True}
+
+    def ability_save(self, ability_id, rating=None, favored=None):
+        characters.save_ability(self.characters_db, int(ability_id), rating, favored)
+        return {"ok": True}
+
+    def ability_add(self, character_id, name):
+        ability_id = characters.add_ability(self.characters_db, int(character_id), name)
+        return {"ok": True, "id": ability_id}
+
+    def ability_remove(self, ability_id):
+        characters.remove_ability(self.characters_db, int(ability_id))
+        return {"ok": True}
+
+    def character_add_charm(self, character_id, charm_id):
+        characters.add_charm(self.characters_db, int(character_id), int(charm_id))
+        return {"ok": True}
+
+    def character_remove_charm(self, link_id):
+        characters.remove_charm(self.characters_db, int(link_id))
+        return {"ok": True}
+
+    def character_reorder_charms(self, character_id, link_ids):
+        characters.reorder_charms(self.characters_db, int(character_id),
+                                  [int(i) for i in link_ids])
+        return {"ok": True}
+
+    def character_add_manual_charm(self, character_id):
+        return {"ok": True, "id": characters.add_manual_charm(
+            self.characters_db, int(character_id))}
+
+    def character_save_manual_charm(self, link_id, fields):
+        characters.save_manual_charm(self.characters_db, int(link_id), fields or {})
+        return {"ok": True}
+
+    def merit_add(self, character_id, name=""):
+        return {"ok": True, "id": characters.add_merit(
+            self.characters_db, int(character_id), name)}
+
+    def merit_save(self, merit_id, fields):
+        characters.save_merit(self.characters_db, int(merit_id), fields or {})
+        return {"ok": True}
+
+    def merit_remove(self, merit_id):
+        characters.remove_merit(self.characters_db, int(merit_id))
+        return {"ok": True}
+
+    def weapon_add(self, character_id):
+        return {"ok": True, "id": characters.add_weapon(
+            self.characters_db, int(character_id))}
+
+    def weapon_save(self, weapon_id, fields):
+        characters.save_weapon(self.characters_db, int(weapon_id), fields or {})
+        return {"ok": True}
+
+    def weapon_remove(self, weapon_id):
+        characters.remove_weapon(self.characters_db, int(weapon_id))
+        return {"ok": True}
+
+    def armor_add(self, character_id):
+        return {"ok": True, "id": characters.add_armor(
+            self.characters_db, int(character_id))}
+
+    def armor_save(self, armor_id, fields):
+        characters.save_armor(self.characters_db, int(armor_id), fields or {})
+        return {"ok": True}
+
+    def armor_remove(self, armor_id):
+        characters.remove_armor(self.characters_db, int(armor_id))
+        return {"ok": True}
+
+    def intimacy_add(self, character_id):
+        return {"ok": True, "id": characters.add_intimacy(
+            self.characters_db, int(character_id))}
+
+    def intimacy_save(self, intimacy_id, fields):
+        characters.save_intimacy(self.characters_db, int(intimacy_id), fields or {})
+        return {"ok": True}
+
+    def intimacy_remove(self, intimacy_id):
+        characters.remove_intimacy(self.characters_db, int(intimacy_id))
+        return {"ok": True}
+
+    def inventory_add(self, character_id):
+        return {"ok": True, "id": characters.add_inventory(
+            self.characters_db, int(character_id))}
+
+    def inventory_save(self, item_id, fields):
+        characters.save_inventory(self.characters_db, int(item_id), fields or {})
+        return {"ok": True}
+
+    def inventory_remove(self, item_id):
+        characters.remove_inventory(self.characters_db, int(item_id))
+        return {"ok": True}
+
+    def experience_purchase_add(self, character_id):
+        return {"ok": True, "id": characters.add_experience_purchase(
+            self.characters_db, int(character_id))}
+
+    def experience_purchase_save(self, purchase_id, fields):
+        characters.save_experience_purchase(
+            self.characters_db, int(purchase_id), fields or {})
+        return {"ok": True}
+
+    def experience_purchase_remove(self, purchase_id):
+        characters.remove_experience_purchase(self.characters_db, int(purchase_id))
+        return {"ok": True}
 
 
 if __name__ == "__main__":

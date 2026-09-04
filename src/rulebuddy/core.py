@@ -285,6 +285,23 @@ def connect_charms():
     return db
 
 
+CHARACTERS_DB_NAME = "exalted-characters.db"
+
+
+def characters_db_path():
+    """Where the Exalted character store lives, apart from any collection."""
+    return os.path.join(app_dir(), CONFIG["books_dir"], CHARACTERS_DB_NAME)
+
+
+def connect_characters():
+    """Open the character store, creating its file the first time it is asked for."""
+    path = characters_db_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    db = sqlite3.connect(path, check_same_thread=False)
+    db.row_factory = sqlite3.Row
+    return db
+
+
 def query_terms(question):
     """Turn a plain question into an FTS5 query. Keeps phrases, drops filler."""
     words = [w.lower() for w in WORD.findall(question)]
