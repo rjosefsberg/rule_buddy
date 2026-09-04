@@ -5,6 +5,7 @@
 <title>Rule Buddy</title>
 <link rel="stylesheet" href="vendor/fontawesome/css/fontawesome.min.css">
 <link rel="stylesheet" href="vendor/fontawesome/css/solid.min.css">
+<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.min.css">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -23,6 +24,7 @@
     <div class="bar tools-bar">
         <span class="group">Tools</span>
         <div class="tabs">
+            <button class="tab on" data-view="search">Search</button>
             <button class="tab" data-view="bookmarks">Bookmarks</button>
             <button class="tab" data-view="import">Import</button>
         </div>
@@ -30,13 +32,14 @@
             <button class="tab game-menu-btn" id="exalted-menu-btn">Exalted ▾</button>
         </div>
         <span class="spacer"></span>
-        <button id="key-btn" title="The API key for written answers">Key…</button>
-        <button id="text-smaller" title="Smaller text (Ctrl and minus)">A−</button>
-        <button id="text-bigger" title="Bigger text (Ctrl and plus)">A+</button>
+        <button class="btn btn-outline-secondary btn-sm" id="key-btn" title="The API key for written answers">Key…</button>
+        <button class="btn btn-outline-secondary btn-sm" id="text-smaller" title="Smaller text (Ctrl and minus)">A−</button>
+        <button class="btn btn-outline-secondary btn-sm" id="text-bigger" title="Bigger text (Ctrl and plus)">A+</button>
     </div>
 
-    <!-- Then the collection that is open, and what it answers. -->
-    <div class="bar book-bar">
+    <!-- Only shown while the Search tab is open: the collection being read,
+         and its own Search/Ask toggle. -->
+    <div class="bar book-bar" id="book-bar">
         <span class="group">This collection</span>
         <div class="tabs">
             <button class="tab on" data-view="search">Search</button>
@@ -50,9 +53,9 @@
             <!-- search view -->
             <div class="view" data-view="search">
                 <form class="field" id="search-form">
-                    <input type="search" id="terms" placeholder="Ask the book…"
+                    <input class="form-control" type="search" id="terms" placeholder="Ask the book…"
                            autocomplete="off" spellcheck="false">
-                    <button class="primary" type="submit">Search</button>
+                    <button class="btn btn-primary primary" type="submit">Search</button>
                 </form>
                 <div class="list-wrap">
                     <table class="rows">
@@ -65,7 +68,7 @@
                     </table>
                 </div>
                 <div class="field">
-                    <button id="open-pdf">Open the PDF at this page</button>
+                    <button class="btn btn-outline-secondary" id="open-pdf">Open the PDF at this page</button>
                 </div>
             </div>
 
@@ -73,14 +76,14 @@
             <div class="view hidden" data-view="ask">
                 <div id="transcript"></div>
                 <form class="field" id="ask-form">
-                    <textarea id="question" rows="3" placeholder="Ask the book…"
+                    <textarea class="form-control" id="question" rows="3" placeholder="Ask the book…"
                               spellcheck="false"></textarea>
                 </form>
                 <div class="field">
                     <span class="hint" id="ask-hint">Enter asks · Shift+Enter adds a line</span>
-                    <button type="button" id="ask-clear">Clear</button>
-                    <button type="button" id="ask-more">Ask more</button>
-                    <button type="button" class="primary" id="ask-new">New question</button>
+                    <button class="btn btn-outline-secondary" type="button" id="ask-clear">Clear</button>
+                    <button class="btn btn-outline-secondary" type="button" id="ask-more">Ask more</button>
+                    <button class="btn btn-primary primary" type="button" id="ask-new">New question</button>
                 </div>
                 <div class="list-wrap" id="ask-sources-wrap">
                     <table class="rows">
@@ -100,20 +103,20 @@
                      style="background:var(--mark)">
                     <span class="hint" id="charm-picking-label"></span>
                     <span class="spacer"></span>
-                    <button type="button" class="primary" id="charm-picking-done">Done</button>
+                    <button class="btn btn-primary primary" type="button" id="charm-picking-done">Done</button>
                 </div>
                 <form class="field" id="charm-form">
-                    <input type="search" id="charm-terms" placeholder="Find a Charm…"
+                    <input class="form-control" type="search" id="charm-terms" placeholder="Find a Charm…"
                            autocomplete="off" spellcheck="false">
-                    <button class="primary" type="submit">Find</button>
-                    <button type="button" id="charm-clear">Clear</button>
+                    <button class="btn btn-primary primary" type="submit">Find</button>
+                    <button class="btn btn-outline-secondary" type="button" id="charm-clear">Clear</button>
                 </form>
                 <div class="filters">
-                    <label>Book <select id="f-book"></select></label>
-                    <label>Tree <select id="f-tree"></select></label>
-                    <label>Type <select id="f-type"></select></label>
-                    <label>Keyword <select id="f-keyword"></select></label>
-                    <label>Essence up to <select id="f-essence"></select></label>
+                    <label>Book <select class="form-select form-select-sm" id="f-book"></select></label>
+                    <label>Tree <select class="form-select form-select-sm" id="f-tree"></select></label>
+                    <label>Type <select class="form-select form-select-sm" id="f-type"></select></label>
+                    <label>Keyword <select class="form-select form-select-sm" id="f-keyword"></select></label>
+                    <label>Essence up to <select class="form-select form-select-sm" id="f-essence"></select></label>
                 </div>
                 <div class="list-wrap">
                     <table class="rows" id="library-table">
@@ -129,24 +132,22 @@
                     </table>
                 </div>
                 <div class="field">
-                    <button id="charm-build">Build the library</button>
-                    <button id="charm-open">Open the PDF at this page</button>
-                    <button class="primary hidden" id="charm-picking-add">Add to character</button>
+                    <button class="btn btn-outline-secondary" id="charm-build">Build the library</button>
+                    <button class="btn btn-outline-secondary" id="charm-open">Open the PDF at this page</button>
+                    <button class="btn btn-primary primary hidden" id="charm-picking-add">Add to character</button>
                 </div>
             </div>
 
             <!-- characters -->
             <div class="view hidden" data-view="characters">
                 <div class="field">
-                    <button type="button" class="primary" id="char-new">New Character</button>
-                    <button type="button" id="char-delete">Delete</button>
+                    <button class="btn btn-primary primary" type="button" id="char-new">New Character</button>
+                    <button class="btn btn-outline-secondary" type="button" id="char-delete">Delete</button>
                 </div>
                 <div class="list-wrap">
                     <table class="rows">
                         <thead><tr>
                             <th>Name</th>
-                            <th style="width:30%">Caste</th>
-                            <th style="width:30%">Concept</th>
                         </tr></thead>
                         <tbody id="char-rows"></tbody>
                     </table>
@@ -156,16 +157,16 @@
             <!-- bookmark editor -->
             <div class="view hidden" data-view="bookmarks">
                 <div class="field">
-                    <input type="text" id="bm-path" placeholder="Open a PDF. Any PDF will do."
+                    <input class="form-control" type="text" id="bm-path" placeholder="Open a PDF. Any PDF will do."
                            readonly>
-                    <button type="button" id="bm-open">Open…</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-open">Open…</button>
                 </div>
                 <div class="field">
-                    <button type="button" id="bm-read">Read the PDF's bookmarks</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-read">Read the PDF's bookmarks</button>
                     <span class="hint">or contents page(s)</span>
-                    <input type="text" id="bm-pages" placeholder="4, 5, 8-11"
+                    <input class="form-control" type="text" id="bm-pages" placeholder="4, 5, 8-11"
                            style="flex:0 0 140px">
-                    <button type="button" id="bm-parse">Read</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-parse">Read</button>
                 </div>
                 <div class="list-wrap">
                     <table class="rows">
@@ -177,28 +178,28 @@
                     </table>
                 </div>
                 <div class="field">
-                    <button type="button" id="bm-rename">Rename…</button>
-                    <button type="button" id="bm-out">◀ Out</button>
-                    <button type="button" id="bm-in">In ▶</button>
-                    <button type="button" id="bm-page">Set page…</button>
-                    <button type="button" id="bm-add">Add…</button>
-                    <button type="button" id="bm-del">Delete</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-rename">Rename…</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-out">◀ Out</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-in">In ▶</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-page">Set page…</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-add">Add…</button>
+                    <button class="btn btn-outline-secondary" type="button" id="bm-del">Delete</button>
                     <span class="hint"></span>
-                    <button type="button" class="primary" id="bm-save">Save to PDF</button>
+                    <button class="btn btn-primary primary" type="button" id="bm-save">Save to PDF</button>
                 </div>
             </div>
 
             <!-- folder import -->
             <div class="view hidden" data-view="import">
                 <div class="field">
-                    <input type="text" id="im-folder" placeholder="Pick a folder of PDFs."
+                    <input class="form-control" type="text" id="im-folder" placeholder="Pick a folder of PDFs."
                            readonly>
-                    <button type="button" id="im-browse">Browse…</button>
+                    <button class="btn btn-outline-secondary" type="button" id="im-browse">Browse…</button>
                 </div>
                 <div class="field">
                     <label class="hint" style="flex:0 0 auto">
                         <input type="checkbox" id="im-deep"> Look in subfolders</label>
-                    <button type="button" id="im-check">Check the PDFs</button>
+                    <button class="btn btn-outline-secondary" type="button" id="im-check">Check the PDFs</button>
                     <span class="hint" id="im-count"></span>
                 </div>
                 <div class="list-wrap">
@@ -213,8 +214,8 @@
                 </div>
                 <div class="field">
                     <span class="hint" style="flex:0 0 auto">Collection name</span>
-                    <input type="text" id="im-name">
-                    <button type="button" class="primary" id="im-index" disabled>
+                    <input class="form-control" type="text" id="im-name">
+                    <button class="btn btn-primary primary" type="button" id="im-index" disabled>
                         Index the good books</button>
                 </div>
             </div>
@@ -238,7 +239,7 @@
     <div id="status">Starting…</div>
 </div>
 
-<div id="book-menu" class="menu hidden">
+<div id="book-menu" class="menu shadow hidden">
     <button data-do="rename">Rename…</button>
     <button data-do="find" class="hidden">Find the PDF…</button>
     <button data-do="add">Add a book to this collection…</button>
@@ -246,54 +247,55 @@
     <button data-do="remove">Remove this book…</button>
 </div>
 
-<div id="collection-menu" class="menu hidden">
+<div id="collection-menu" class="menu shadow hidden">
     <button data-do="rename-collection">Rename this collection…</button>
     <button data-do="delete-collection">Delete this collection…</button>
 </div>
 
-<div id="exalted-menu" class="menu hidden">
+<div id="exalted-menu" class="menu shadow hidden">
     <button data-view="library">Charm Library</button>
     <button data-view="characters">Characters</button>
 </div>
 
-<div id="charm-known-menu" class="menu hidden">
+<div id="charm-known-menu" class="menu shadow hidden">
     <button data-do="view"><i class="fa-solid fa-eye"></i> View</button>
     <button data-do="delete"><i class="fa-solid fa-trash"></i> Delete</button>
 </div>
 
-<dialog id="key-box">
+<dialog id="key-box" class="shadow-lg rounded-3">
     <form method="dialog">
         <p>Anthropic API key. It buys written answers; search needs no key.</p>
-        <input type="password" id="key-value" autocomplete="off"
+        <input class="form-control" type="password" id="key-value" autocomplete="off"
                placeholder="sk-ant-…">
         <label class="hint" style="display:flex;gap:6px;padding-top:10px">
             <input type="checkbox" id="key-save"> Save it to config.json</label>
         <div class="field" style="padding:12px 0 0;justify-content:flex-end">
-            <button type="button" id="key-cancel">Cancel</button>
-            <button type="button" id="key-drop">Remove the key</button>
-            <button class="primary" value="ok">Use this key</button>
+            <button class="btn btn-outline-secondary" type="button" id="key-cancel">Cancel</button>
+            <button class="btn btn-outline-secondary" type="button" id="key-drop">Remove the key</button>
+            <button class="btn btn-primary primary" value="ok">Use this key</button>
         </div>
     </form>
 </dialog>
 
-<dialog id="ask-line">
+<dialog id="ask-line" class="shadow-lg rounded-3">
     <form method="dialog">
         <p id="ask-line-prompt"></p>
-        <input type="text" id="ask-line-value" autocomplete="off">
+        <input class="form-control" type="text" id="ask-line-value" autocomplete="off">
         <div class="field" style="padding:12px 0 0;justify-content:flex-end">
-            <button type="button" id="ask-line-cancel">Cancel</button>
-            <button class="primary" id="ask-line-ok" value="ok">OK</button>
+            <button class="btn btn-outline-secondary" type="button" id="ask-line-cancel">Cancel</button>
+            <button class="btn btn-primary primary" id="ask-line-ok" value="ok">OK</button>
         </div>
     </form>
 </dialog>
 
-<dialog id="charm-view" style="max-width:640px;width:90%">
+<dialog id="charm-view" class="shadow-lg rounded-3" style="max-width:640px;width:90%">
     <div id="charm-view-body"></div>
     <div class="field" style="padding:14px 0 0;justify-content:flex-end">
-        <form method="dialog"><button class="primary">Close</button></form>
+        <form method="dialog"><button class="btn btn-primary primary">Close</button></form>
     </div>
 </dialog>
 
+<script src="characters-ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
