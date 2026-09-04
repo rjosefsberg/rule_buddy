@@ -45,6 +45,33 @@
     }
 }
 
+/* Bootstrap supplies component behavior (buttons, form controls, tables,
+   badges) - its own color tokens are remapped onto the app's palette here so
+   a borrowed component still reads as Rule Buddy, not as generic Bootstrap
+   blue. Both theme blocks above already redefine --accent/--rule/etc.; this
+   block just follows suit for Bootstrap's own custom properties. */
+:root {
+    --bs-body-font-family: var(--body);
+    --bs-body-bg: var(--chrome);
+    --bs-body-color: var(--ink);
+    --bs-border-color: var(--rule);
+    --bs-border-radius: var(--radius);
+    --bs-border-radius-sm: var(--radius);
+    --bs-border-radius-lg: var(--radius);
+    --bs-primary: var(--accent);
+    --bs-primary-rgb: 26, 78, 138;
+    --bs-link-color: var(--accent);
+    --bs-link-hover-color: var(--accent);
+    --bs-secondary-color: var(--muted);
+    --bs-tertiary-bg: var(--quote);
+    --bs-emphasis-color: var(--ink);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bs-primary-rgb: 122, 167, 220; }
+}
+:root[data-theme="dark"] { --bs-primary-rgb: 122, 167, 220; }
+
 * { box-sizing: border-box; }
 
 html { font-size: 14px; }        /* the one number text scaling changes */
@@ -197,17 +224,21 @@ body {
     .group { display: none; }
 }
 
+/* Styled to read as a segmented control, Bootstrap nav-pills flavor. */
 .tab {
     border: 1px solid transparent;
     background: none;
     color: var(--muted);
-    padding: 5px 12px;
-    border-radius: var(--radius);
+    padding: 6px 14px;
+    border-radius: 50rem;
     cursor: pointer;
     font: inherit;
+    transition: background-color 0.12s, color 0.12s;
 }
 
-.tab.on { color: var(--ink); background: var(--quote); border-color: var(--rule); }
+.tab:hover { color: var(--accent); }
+.tab.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+.tab.on:hover { color: #fff; }
 
 #panes {
     flex: 1;
@@ -253,18 +284,13 @@ body {
     padding: var(--gap);
 }
 
+/* Layout only - a .form-control input handles its own padding, border,
+   and focus ring now that Bootstrap is loaded; this just makes it stretch
+   to fill the row like every other .field child. */
 .field input[type="search"], .field input[type="text"] {
     flex: 1;
     min-width: 0;
-    padding: 8px 10px;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius);
-    background: var(--page);
-    color: var(--ink);
-    font: inherit;
 }
-
-.field input:focus { outline: none; border-color: var(--accent); }
 
 button {
     padding: 7px 14px;
@@ -359,12 +385,35 @@ table.rows td {
     white-space: nowrap;
 }
 
+/* A cell holding more than one icon button (Cement/Edit alongside Delete)
+   must not ellipsis - there is no text to truncate, and the default rule
+   above was clipping the second button down to the "…" it left behind. */
+table.rows td.row-actions {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
 table.rows tr:nth-child(even) td { background: var(--quote); }
 table.rows tr:hover td { background: var(--mark); }
 table.rows tr.on td { background: var(--accent); color: var(--page); }
 table.rows td.num { text-align: right; font: 0.86rem var(--mono); }
-table.rows td.tag { color: var(--muted); font: 0.79rem var(--mono); }
-table.rows tr.on td.num, table.rows tr.on td.tag { color: var(--page); }
+
+/* A cost/dice-pool cell reads as a small pill chip, badge-style, rather than
+   plain mono text - it is a short fixed-vocabulary tag, not prose. */
+table.rows td.tag { font: 0.79rem var(--mono); }
+
+/* A cost/dice-pool value reads as a small pill chip, badge-style, rather
+   than plain mono text - it is a short fixed-vocabulary tag, not prose. */
+.chip {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 50rem;
+    background: var(--quote);
+    color: var(--muted);
+}
+table.rows tr.on td.num { color: var(--page); }
+table.rows tr.on td .chip { background: rgba(255, 255, 255, 0.18); color: var(--page); }
 
 /* ------------------------------------------------------------ the excerpt */
 
@@ -442,15 +491,7 @@ a.cite:hover { text-decoration: underline; }
     flex: 1;
     min-width: 0;
     resize: none;
-    padding: 9px 10px;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius);
-    background: var(--page);
-    color: var(--ink);
-    font: inherit;
 }
-
-#question:focus { outline: none; border-color: var(--accent); }
 
 /* The hint asks for no width of its own, so it can never stop the pane
    from shrinking. That floor is exactly what the Tk version fought. */
@@ -497,13 +538,8 @@ a.cite:hover { text-decoration: underline; }
 }
 
 .filters select {
-    padding: 5px 6px;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius);
-    background: var(--page);
-    color: var(--ink);
-    font: inherit;
     max-width: 190px;
+    width: auto;
 }
 
 /* The Cost/Mins/Type/... block reads as a small table: a bordered box, one
@@ -582,16 +618,5 @@ dialog {
 dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 dialog p { margin: 0 0 8px; }
 
-dialog input[type="text"] {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius);
-    background: var(--page);
-    color: var(--ink);
-    font: inherit;
-}
-
-dialog input:focus { outline: none; border-color: var(--accent); }
 
 .hidden { display: none !important; }

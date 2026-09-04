@@ -843,6 +843,7 @@ class Api:
             if link["charm_id"] is None:
                 charms_out.append({
                     "id": link["id"], "charm_id": None, "manual": True,
+                    "cemented": bool(link["cemented"]),
                     "name": link["name"] or "", "type": link["type"] or "",
                     "cost": link["cost"] or "", "mins": "", "keywords": "",
                     "duration": "", "prereqs": "", "text": link["text"] or "",
@@ -907,6 +908,10 @@ class Api:
 
     def character_save_manual_charm(self, link_id, fields):
         characters.save_manual_charm(self.characters_db, int(link_id), fields or {})
+        return {"ok": True}
+
+    def character_cement_manual_charm(self, link_id):
+        characters.cement_manual_charm(self.characters_db, int(link_id))
         return {"ok": True}
 
     def merit_add(self, character_id, name=""):
@@ -980,6 +985,14 @@ class Api:
 
     def experience_purchase_remove(self, purchase_id):
         characters.remove_experience_purchase(self.characters_db, int(purchase_id))
+        return {"ok": True}
+
+    def experience_purchase_cement(self, purchase_id):
+        characters.cement_experience_purchase(self.characters_db, int(purchase_id))
+        return {"ok": True}
+
+    def experience_purchase_uncement(self, purchase_id):
+        characters.uncement_experience_purchase(self.characters_db, int(purchase_id))
         return {"ok": True}
 
 
