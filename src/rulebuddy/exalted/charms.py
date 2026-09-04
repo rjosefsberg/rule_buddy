@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS charms (
     collection TEXT, book_title TEXT, book_source TEXT,
     name TEXT, tree TEXT, ability TEXT, rating INTEGER, essence INTEGER,
     cost TEXT, mins TEXT, type TEXT, keywords TEXT, duration TEXT,
-    prereqs TEXT, page INTEGER, text TEXT);
+    prereqs TEXT, page INTEGER, text TEXT, simple_text TEXT);
 CREATE INDEX IF NOT EXISTS charms_name ON charms(name);
 CREATE INDEX IF NOT EXISTS charms_collection ON charms(collection);
 CREATE VIRTUAL TABLE IF NOT EXISTS charms_fts USING fts5(
@@ -263,6 +263,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS charms_fts USING fts5(
 
 def ensure_schema(db):
     db.executescript(SCHEMA)
+    columns = {row[1] for row in db.execute("PRAGMA table_info(charms)")}
+    if "simple_text" not in columns:
+        db.execute("ALTER TABLE charms ADD COLUMN simple_text TEXT")
     db.commit()
 
 
@@ -278,6 +281,12 @@ def build(source_db, charms_db, collection, progress=None):
     the chunk boundary.
     """
     ensure_schema(charms_db)
+    # A simplified rewrite is paid-for work, done outside this build. Carry it
+    # forward by name so a rebuild - a parser fix, a reindex - does not throw
+    # it away; only a Charm whose name actually changes loses its match.
+    simplified = {row["name"].lower(): row["simple_text"] for row in charms_db.execute(
+        "SELECT name, simple_text FROM charms"
+        " WHERE collection = ? AND simple_text IS NOT NULL", (collection,))}
     charms_db.execute("DELETE FROM charms WHERE collection = ?", (collection,))
 
     books = {row["id"]: (row["title"], row["source"])
@@ -303,15 +312,16 @@ def build(source_db, charms_db, collection, progress=None):
             charm["book_title"] = title
             charm["book_source"] = source
             charm["page"] = row["page_start"]
+            charm["simple_text"] = simplified.get(charm["name"].lower())
             best[key] = charm
 
     charms_db.executemany(
         "INSERT INTO charms (collection, book_title, book_source, name, tree,"
         " ability, rating, essence, cost, mins, type, keywords, duration,"
-        " prereqs, page, text)"
+        " prereqs, page, text, simple_text)"
         " VALUES (:collection,:book_title,:book_source,:name,:group,:ability,"
         ":rating,:essence,:cost,:mins,:type,:keywords,:duration,:prereqs,"
-        ":page,:text)",
+        ":page,:text,:simple_text)",
         list(best.values()))
     charms_db.execute("INSERT INTO charms_fts(charms_fts) VALUES('rebuild')")
     charms_db.commit()

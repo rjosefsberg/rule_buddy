@@ -278,6 +278,21 @@ button {
 
 button:hover { border-color: var(--accent); color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: default; }
+
+/* A button that is just an icon: square, no padded text-button look. */
+.icon-btn {
+    padding: 4px 6px;
+    border-color: transparent;
+    background: none;
+    line-height: 1;
+}
+.icon-btn:hover { border-color: var(--rule); background: var(--quote); }
+
+/* An "add a row" trigger: a plain green plus, its label a tooltip rather
+   than text, so a row of them at the top of a section reads as one action
+   each instead of a wall of "Add a ..." buttons. */
+.add-btn { color: #2f9e44; font-size: 1.05rem; }
+.add-btn:hover { color: #227a35; border-color: transparent; background: var(--quote); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ------------------------------------------------------------ the results */
@@ -319,6 +334,10 @@ body.dragging { cursor: col-resize; user-select: none; }
 table.rows th.sortable { cursor: pointer; }
 table.rows th.sortable:hover { color: var(--ink); }
 table.rows th.sortable .arrow { font-size: 0.7em; margin-left: 3px; }
+
+/* A row that can be dragged to reorder, and the handle that starts it. */
+table.rows td.drag-handle { cursor: grab; color: var(--muted); text-align: center; }
+table.rows tr.dragging-row, table.rows tr[draggable]:active { opacity: 0.5; }
 
 table.rows th {
     position: sticky;
@@ -487,10 +506,38 @@ a.cite:hover { text-decoration: underline; }
     max-width: 190px;
 }
 
-#charm-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
-#charm-detail dt { font-weight: 600; }
-#charm-detail dd { margin: 0; }
-#charm-detail h2 { color: var(--accent); font-family: var(--read); margin: 0 0 12px; }
+/* The Cost/Mins/Type/... block reads as a small table: a bordered box, one
+   row per field, the label in its own shaded cell so it stays legible next
+   to the value instead of just leading it with whitespace. */
+#charm-detail dl, #charm-view-body dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin: 0;
+}
+#charm-detail dt, #charm-view-body dt {
+    font: 600 0.78rem var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: var(--quote);
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    align-items: center;
+}
+#charm-detail dd, #charm-view-body dd {
+    margin: 0;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--rule);
+}
+#charm-detail dl > dt:nth-last-of-type(1), #charm-view-body dl > dt:nth-last-of-type(1),
+#charm-detail dl > dd:nth-last-of-type(1), #charm-view-body dl > dd:nth-last-of-type(1) {
+    border-bottom: none;
+}
+#charm-detail h2, #charm-view-body h2 { color: var(--accent); font-family: var(--read); margin: 0 0 12px; }
 
 /* ------------------------------------------------------------ a small menu */
 
@@ -513,7 +560,11 @@ a.cite:hover { text-decoration: underline; }
     text-align: left;
     padding: 7px 10px;
     border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
+.menu button i { width: 1em; text-align: center; color: var(--muted); }
 
 .menu button:hover { background: var(--quote); color: var(--accent); }
 

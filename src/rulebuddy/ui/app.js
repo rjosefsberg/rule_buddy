@@ -45,6 +45,9 @@ const state = {
     charm: null,         // the chosen charm row
     charms: [],
     charmSort: null,     // {key, dir}, or null for the server's own order
+    characters: [],
+    character: null,     // the full record of the open character
+    pickingCharmsFor: null, // {id, name}, while the Charm Library is adding to a sheet
     source: "",
     page: 0,
 };
@@ -67,13 +70,49 @@ function showView(name) {
     document.querySelectorAll(".view").forEach((view) =>
         view.classList.toggle("hidden",
             !view.dataset.view.split(" ").includes(name)));
-    if (name === "library") loadFilters();
+    if (name === "library") { loadFilters(); updatePickingBanner(); }
+    if (name === "characters") loadCharacters();
     if (name === "ask") $("question").focus();
     // The editor and the importer are tools, not reading. They take the width.
     const wide = name === "bookmarks" || name === "import";
     $("sash").classList.toggle("hidden", wide);
     $("right").classList.toggle("hidden", wide);
     $("left").style.flexBasis = wide ? "100%" : "";
+    enterCharacterLayout(name === "characters");
+}
+
+/* A character sheet wants the opposite balance of everything else: the
+   shelf of books is not what you are looking at, and the roster list
+   matters far less than the sheet itself. Entering restores on the way out,
+   but only if this is the state the view actually changed - a plain switch
+   between, say, Search and Ask must never touch either. */
+let shelfClosedBeforeCharacters = null;
+let splitBeforeCharacters = null;
+
+function enterCharacterLayout(entering) {
+    if (entering) {
+        if (shelfClosedBeforeCharacters === null) {
+            shelfClosedBeforeCharacters = $("shelf").classList.contains("closed");
+            splitBeforeCharacters = document.documentElement.style.getPropertyValue("--split");
+        }
+        setShelfClosed(true);
+        document.documentElement.style.setProperty("--split", "28%");
+    } else if (shelfClosedBeforeCharacters !== null) {
+        setShelfClosed(shelfClosedBeforeCharacters);
+        if (splitBeforeCharacters) {
+            document.documentElement.style.setProperty("--split", splitBeforeCharacters);
+        } else {
+            document.documentElement.style.removeProperty("--split");
+        }
+        shelfClosedBeforeCharacters = null;
+        splitBeforeCharacters = null;
+    }
+}
+
+function setShelfClosed(closed) {
+    const shelf = $("shelf");
+    shelf.classList.toggle("closed", closed);
+    $("shelf-toggle").textContent = closed ? "›" : "‹";
 }
 
 /* ------------------------------------------------------------- the shelf */
@@ -416,6 +455,26 @@ function sortCharms(key) {
     renderCharmRows();
 }
 
+/* The reader's Original/Simplified choice is a per-viewer convenience, not
+   app state, so it lives in localStorage rather than being asked of the
+   server. A browser that blocks storage (a private window, say) just falls
+   back to the default every time - not worth failing the page over. */
+function charmTextMode() {
+    try {
+        return localStorage.getItem("charmTextMode") || "simple";
+    } catch {
+        return "simple";
+    }
+}
+
+function setCharmTextMode(mode) {
+    try {
+        localStorage.setItem("charmTextMode", mode);
+    } catch {
+        /* no storage available; the choice just does not stick */
+    }
+}
+
 function pickCharm(i) {
     const row = state.charms[i];
     if (!row) return;
@@ -424,6 +483,14 @@ function pickCharm(i) {
         tr.classList.toggle("on", Number(tr.dataset.i) === i));
     const field = (label, value) =>
         `<dt>${label}</dt><dd>${escape(value || "None")}</dd>`;
+    const mode = charmTextMode();
+    const hasSimple = !!(row.simple_text && row.simple_text.trim());
+    const showingSimple = mode === "simple" && hasSimple;
+    const body = showingSimple ? row.simple_text : row.text;
+    const missing = mode === "simple" && !hasSimple
+        ? ' <span class="hint">(not simplified yet — showing the original)</span>' : "";
+    const modeTab = (value, label) => `<button type="button"
+        class="tab${mode === value ? " on" : ""}" data-mode="${value}">${label}</button>`;
     $("charm-detail").innerHTML = `
         <h2>${escape(row.name)}</h2>
         <dl>
@@ -434,10 +501,16 @@ function pickCharm(i) {
             ${field("Duration", row.duration)}
             ${field("Prerequisite Charms", row.prereqs)}
         </dl>
-        <p style="font-family:var(--read);font-size:16px;margin-top:16px">
-            ${escape(row.text)}</p>
+        <div class="tabs" style="margin-top:14px">
+            ${modeTab("simple", "Simplified")}${modeTab("original", "Original")}${missing}
+        </div>
+        <p style="font-family:var(--read);font-size:1.14rem;margin-top:10px">
+            ${escape(body)}</p>
         <div class="head" style="font:12px var(--mono);color:var(--muted);
              margin-top:18px">${escape(prettyBook(row.book))} · page ${row.page}</div>`;
+    $("charm-detail").querySelectorAll("[data-mode]").forEach((btn) => {
+        btn.onclick = () => { setCharmTextMode(btn.dataset.mode); pickCharm(i); };
+    });
 }
 
 async function buildCharms() {
@@ -448,6 +521,536 @@ async function buildCharms() {
     filtersLoaded = false;
     say(`The library holds ${out.count} charms.`);
     loadFilters();
+}
+
+/* -------------------------------------------------------------- characters */
+
+const ATTRIBUTES = ["strength", "dexterity", "stamina", "charisma",
+    "manipulation", "appearance", "perception", "intelligence", "wits"];
+
+let charactersLoaded = false;
+
+async function loadCharacters(force) {
+    if (charactersLoaded && !force) return;
+    state.characters = await api().character_list();
+    renderCharacterRows();
+    charactersLoaded = true;
+    if (state.characters.length && !state.character) {
+        pickCharacter(state.characters[0].id);
+    }
+}
+
+function renderCharacterRows() {
+    $("char-rows").innerHTML = state.characters.map((row) => `
+        <tr data-id="${row.id}" class="${state.character && state.character.id === row.id ? "on" : ""}">
+            <td>${escape(row.name)}</td>
+            <td>${escape(row.caste)}</td>
+            <td>${escape(row.concept)}</td>
+        </tr>`).join("");
+    $("char-rows").querySelectorAll("tr").forEach((tr) => {
+        tr.onclick = () => pickCharacter(Number(tr.dataset.id));
+    });
+}
+
+async function pickCharacter(id) {
+    state.character = await api().character_get(id);
+    renderCharacterRows();
+    renderCharacterSheet();
+}
+
+function renderCharacterSheet() {
+    const c = state.character;
+    if (!c) { $("character-detail").innerHTML = ""; return; }
+
+    // An add or a remove rebuilds the whole sheet - fresh rows need fresh
+    // ids - which would otherwise slam every <details> back to its default
+    // state. Empty means this is the first render (a fresh character, or
+    // the tab just opened), so the template's own defaults stand; anything
+    // else means a re-render of the same sheet, and every section keeps
+    // exactly the open/closed state it already had.
+    const existing = $("character-detail").querySelectorAll("details[data-section]");
+    const openSections = new Set(Array.from(existing)
+        .filter((d) => d.open).map((d) => d.dataset.section));
+    const isReRender = existing.length > 0;
+
+    const field = (name, label, wide) => `
+        <label class="hint" style="display:flex;flex-direction:column;gap:3px;
+             ${wide ? "flex:1 1 220px" : "flex:0 0 140px"}">${label}
+            <input type="text" value="${escape(c[name] || "")}" data-field="${name}"
+                   style="padding:6px 8px;border:1px solid var(--rule);
+                          border-radius:var(--radius)"></label>`;
+
+    const attr = (name, label, max) => `
+        <label class="hint" style="display:flex;flex-direction:column;gap:3px;width:8em">
+            ${label}
+            <input type="number" min="0" max="${max || 5}" value="${c[name] || 0}" data-attr="${name}"
+                   style="padding:6px 8px;border:1px solid var(--rule);
+                          border-radius:var(--radius)"></label>`;
+
+    // A cell editable in place, shared by Merits/Weapons/Armor/Intimacies/
+    // Inventory - every one of those is just rows a character owns freely,
+    // saved and removed the same way regardless of which fields it has.
+    const rowCell = (table, id, key, value, width, type) => `
+        <td><input type="${type || "text"}" value="${escape(value ?? "")}"
+            data-row-table="${table}" data-row-id="${id}" data-row-field="${key}"
+            ${width ? `style="width:${width}"` : ""}></td>`;
+    const removeCell = (table, id, label) => `
+        <td><button type="button" class="icon-btn" data-row-remove="${table}:${id}"
+                title="Remove ${escape(label)}"><i class="fa-solid fa-trash"></i></button></td>`;
+
+    const abilityRow = (a) => `
+        <tr data-id="${a.id}">
+            <td><label class="hint" style="padding: 4px 0;display:flex;gap:6px;align-items:center">
+                <input type="checkbox" data-ability-favored="${a.id}" ${a.favored ? "checked" : ""}>
+                ${escape(a.name)}</label></td>
+            <td class="num"><input type="number" min="0" max="5" value="${a.rating}"
+                data-ability-rating="${a.id}" style="width:3.5em"></td>
+            <td><button type="button" data-ability-remove="${a.id}" class="icon-btn" hidden
+                    title="Remove ${escape(a.name)}"><i class="fa-solid fa-trash"></i></button></td>
+        </tr>`;
+
+    const knownCharms = c.charms || [];
+    const charmRow = (kc) => kc.manual ? `
+        <tr data-id="${kc.id}" data-charm-id="" draggable="true">
+            <td class="drag-handle" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></td>
+            ${rowCell("charms_known_manual", kc.id, "name", kc.name)}
+            <td><input type="text" value="${escape(kc.type)}" style="width:5.5em"
+                data-row-table="charms_known_manual" data-row-id="${kc.id}" data-row-field="type"></td>
+            <td class="tag"><input type="text" value="${escape(kc.cost)}" style="width:4.5em"
+                data-row-table="charms_known_manual" data-row-id="${kc.id}" data-row-field="cost"></td>
+            ${rowCell("charms_known_manual", kc.id, "book", kc.book)}
+            <td class="num"><input type="number" value="${kc.page ?? ""}" style="width:3.5em"
+                data-row-table="charms_known_manual" data-row-id="${kc.id}" data-row-field="page"></td>
+        </tr>` : `
+        <tr data-id="${kc.id}" data-charm-id="${kc.charm_id}" draggable="true">
+            <td class="drag-handle" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></td>
+            <td>${escape(kc.name)}</td>
+            <td>${escape(kc.type)}</td>
+            <td class="tag">${escape(kc.cost)}</td>
+            <td>${escape(prettyBook(kc.book))}</td>
+            <td class="num">${kc.page || ""}</td>
+        </tr>`;
+
+    const meritRow = (m) => `<tr>
+        ${rowCell("merits", m.id, "name", m.name)}
+        ${rowCell("merits", m.id, "rating", m.rating, "3.5em", "number")}
+        ${removeCell("merits", m.id, m.name || "this Merit")}</tr>`;
+
+    const weaponRow = (w) => `<tr>
+        ${rowCell("weapons", w.id, "name", w.name)}
+        ${rowCell("weapons", w.id, "acc", w.acc, "3.5em")}
+        ${rowCell("weapons", w.id, "dmg", w.dmg, "3.5em")}
+        ${rowCell("weapons", w.id, "def", w.def, "3.5em")}
+        ${rowCell("weapons", w.id, "ovw", w.ovw, "3.5em")}
+        ${rowCell("weapons", w.id, "tags", w.tags)}
+        ${rowCell("weapons", w.id, "dice_pool", w.dice_pool, "4.5em")}
+        ${removeCell("weapons", w.id, w.name || "this weapon")}</tr>`;
+
+    const armorRow = (a) => `<tr>
+        ${rowCell("armor", a.id, "name", a.name)}
+        ${rowCell("armor", a.id, "soak", a.soak, "3.5em")}
+        ${rowCell("armor", a.id, "hardness", a.hardness, "3.5em")}
+        ${rowCell("armor", a.id, "mobility", a.mobility, "3.5em")}
+        ${rowCell("armor", a.id, "tags", a.tags)}
+        ${removeCell("armor", a.id, a.name || "this armor")}</tr>`;
+
+    const intimacyRow = (i) => `<tr>
+        ${rowCell("intimacies", i.id, "description", i.description)}
+        ${rowCell("intimacies", i.id, "intensity", i.intensity, "7em")}
+        ${removeCell("intimacies", i.id, i.description || "this Intimacy")}</tr>`;
+
+    const inventoryRow = (item) => `<tr>
+        ${rowCell("inventory", item.id, "text", item.text)}
+        ${removeCell("inventory", item.id, item.text || "this item")}</tr>`;
+
+    const experiencePurchaseRow = (p) => `<tr>
+        ${rowCell("experience_purchases", p.id, "date", p.date, "9.5em", "date")}
+        ${rowCell("experience_purchases", p.id, "cost", p.cost, "5.5em", "number")}
+        ${rowCell("experience_purchases", p.id, "bought", p.bought)}
+        ${removeCell("experience_purchases", p.id, p.bought || "this purchase")}</tr>`;
+
+    $("character-detail").innerHTML = `
+        <div class="field" style="flex-wrap:wrap;padding:0 0 14px">
+            ${field("name", "Name", true)}${field("player", "Player")}
+            ${field("caste", "Caste")}${field("concept", "Concept", true)}
+            ${field("anima", "Anima", true)}${field("supernal_ability", "Supernal Ability")}
+        </div>
+        <h2 style="font-size:15px;margin:0 0 8px">Attributes</h2>
+        <div style="display:grid;grid-template-columns:repeat(3, 8em);
+             grid-template-rows:repeat(3, auto);grid-auto-flow:column;
+             gap:10px;padding:0 0 16px">
+            ${ATTRIBUTES.map((a) => attr(a, a[0].toUpperCase() + a.slice(1))).join("")}
+        </div>
+        <details open data-section="abilities" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Abilities</summary>
+            <div class="field" style="padding:8px 0 0">
+                <input type="text" id="ability-new-name" placeholder="Custom Ability…" style="flex:1">
+                <button type="button" id="ability-new-add" class="icon-btn add-btn"
+                        title="Add a custom Ability"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <label class="hint" style="display:flex;gap:6px;align-items:center;padding:8px 0 4px">
+                <input type="checkbox" id="ability-remove-mode"> Allow removing abilities</label>
+            <table class="rows" style="margin-bottom:12px">
+                <thead><tr><th>Ability</th><th style="width:70px">Rating</th><th style="width:80px"></th></tr></thead>
+                <tbody>${c.abilities.map(abilityRow).join("")}</tbody>
+            </table>
+        </details>
+        <details open data-section="charms" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Charms Known</summary>
+            <div class="field" style="padding:8px 0 0">
+                    <button type="button" data-add="charms_known_manual" class="icon-btn add-btn"
+                        title="Add a Charm by hand"><i class="fa-solid fa-plus"></i></button>
+                        <div style="display: flex;align-self: anchor-center">OR</div>
+                    <button type="button" id="charm-add-open" class="icon-btn add-btn">Find a Charm to add…</button>
+                <span class="hint">Drag the handle to reorder. Right-click a Charm to view or delete it.</span>
+            </div>
+            <table class="rows" id="known-charms-table" style="margin-top:8px">
+                <thead><tr>
+                    <th style="width:28px"></th>
+                    <th>Charm</th>
+                    <th style="width:14%">Type</th>
+                    <th style="width:86px">Cost</th>
+                    <th style="width:20%">Book</th>
+                    <th style="width:56px">Page</th>
+                </tr></thead>
+                <tbody id="known-charm-rows" data-rows="charms_known_manual">${knownCharms.length ? knownCharms.map(charmRow).join("")
+        : '<tr><td colspan="6" class="hint">No Charms known yet.</td></tr>'}</tbody>
+            </table>
+        </details>
+        <details data-section="tracks" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Willpower, Essence &amp; Limit</summary>
+            <div class="field" style="flex-wrap:wrap;padding:8px 0 0">
+                ${attr("willpower_rating", "Willpower", 10)}${attr("willpower_current", "WP Current", 10)}
+                ${attr("essence_rating", "Essence", 10)}
+                ${attr("personal_motes", "Personal", 99)}${attr("personal_committed", "Pers. Committed", 99)}
+                ${attr("peripheral_motes", "Peripheral", 99)}${attr("peripheral_committed", "Periph. Committed", 99)}
+            </div>
+            <div class="field" style="flex-wrap:wrap;padding:8px 0 16px">
+                ${field("limit_trigger", "Limit Trigger", true)}${attr("limit_current", "Limit", 10)}
+            </div>
+        </details>
+        <details data-section="health" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Health</summary>
+            <div class="field" style="flex-wrap:wrap;padding:8px 0 16px">
+                ${attr("health_boxes", "Health Boxes", 30)}${attr("bashing", "Bashing", 30)}
+                ${attr("lethal", "Lethal", 30)}${attr("aggravated", "Aggravated", 30)}
+            </div>
+        </details>
+        <details data-section="merits" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Merits</summary>
+            <div class="field" style="padding:8px 0 0">
+                <button type="button" data-add="merits" class="icon-btn add-btn"
+                        title="Add a Merit"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <table class="rows" style="margin-top:8px">
+                <thead><tr><th>Merit</th><th style="width:70px">Rating</th><th style="width:44px"></th></tr></thead>
+                <tbody data-rows="merits">${c.merits.length ? c.merits.map(meritRow).join("")
+        : '<tr><td colspan="3" class="hint">None yet.</td></tr>'}</tbody>
+            </table>
+        </details>
+        <details data-section="weapons" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Weapons</summary>
+            <div class="field" style="padding:8px 0 0">
+                <button type="button" data-add="weapons" class="icon-btn add-btn"
+                        title="Add a Weapon"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <table class="rows" style="margin-top:8px">
+                <thead><tr>
+                    <th>Weapon</th><th style="width:56px">Acc</th><th style="width:56px">Dmg</th>
+                    <th style="width:56px">Def</th><th style="width:56px">Ovw</th>
+                    <th>Tags</th><th style="width:72px">Pool</th><th style="width:44px"></th>
+                </tr></thead>
+                <tbody data-rows="weapons">${c.weapons.length ? c.weapons.map(weaponRow).join("")
+        : '<tr><td colspan="8" class="hint">None yet.</td></tr>'}</tbody>
+            </table>
+        </details>
+        <details data-section="armor" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Armor</summary>
+            <div class="field" style="padding:8px 0 0">
+                <button type="button" data-add="armor" class="icon-btn add-btn"
+                        title="Add Armor"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <table class="rows" style="margin-top:8px">
+                <thead><tr>
+                    <th>Armor</th><th style="width:56px">Soak</th><th style="width:56px">Hard</th>
+                    <th style="width:56px">Mob.</th><th>Tags</th><th style="width:44px"></th>
+                </tr></thead>
+                <tbody data-rows="armor">${c.armor.length ? c.armor.map(armorRow).join("")
+        : '<tr><td colspan="6" class="hint">None yet.</td></tr>'}</tbody>
+            </table>
+        </details>
+        <details data-section="intimacies" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Intimacies</summary>
+            <div class="field" style="padding:8px 0 0">
+                <button type="button" data-add="intimacies" class="icon-btn add-btn"
+                        title="Add an Intimacy"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <table class="rows" style="margin-top:8px">
+                <thead><tr><th>Intimacy</th><th style="width:9em">Intensity</th><th style="width:44px"></th></tr></thead>
+                <tbody data-rows="intimacies">${c.intimacies.length ? c.intimacies.map(intimacyRow).join("")
+        : '<tr><td colspan="3" class="hint">None yet.</td></tr>'}</tbody>
+            </table>
+        </details>
+        <details data-section="inventory" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Inventory</summary>
+            <div class="field" style="padding:8px 0 0">
+                <button type="button" data-add="inventory" class="icon-btn add-btn"
+                        title="Add an Item"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <table class="rows" style="margin-top:8px">
+                <thead><tr><th>Item</th><th style="width:44px"></th></tr></thead>
+                <tbody data-rows="inventory">${c.inventory.length ? c.inventory.map(inventoryRow).join("")
+        : '<tr><td colspan="2" class="hint">None yet.</td></tr>'}</tbody>
+            </table>
+        </details>
+        <details data-section="experience" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Experience</summary>
+            <div class="field" style="flex-wrap:wrap;padding:8px 0 0">
+                ${attr("exp_current", "XP Current", 999)}${attr("exp_total", "XP Total", 999)}
+                ${attr("solar_exp_current", "Solar XP Current", 999)}${attr("solar_exp_total", "Solar XP Total", 999)}
+            </div>
+            <div class="field" style="padding:8px 0 0">
+                <button type="button" data-add="experience_purchases" class="icon-btn add-btn"
+                        title="Add a purchase"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <table class="rows" style="margin-top:8px">
+                <thead><tr><th style="width:8em">Date</th><th style="width:5.5em">Cost</th>
+                    <th>Bought</th><th style="width:44px"></th></tr></thead>
+                <tbody data-rows="experience_purchases">${c.experience_purchases.length
+                    ? c.experience_purchases.map(experiencePurchaseRow).join("")
+                    : '<tr><td colspan="4" class="hint">None yet.</td></tr>'}</tbody>
+            </table>
+        </details>
+        <details data-section="notes" style="margin-bottom:12px">
+            <summary style="cursor:pointer;font-size:15px;font-weight:600">Notes</summary>
+            <textarea data-field="notes" style="width:100%;min-height:120px;padding:8px;
+                margin-top:8px;border:1px solid var(--rule);border-radius:var(--radius);
+                font:inherit;resize:vertical">${escape(c.notes || "")}</textarea>
+        </details>`;
+
+    if (isReRender) {
+        $("character-detail").querySelectorAll("details[data-section]").forEach((d) => {
+            d.open = openSections.has(d.dataset.section);
+        });
+    }
+
+    $("character-detail").querySelectorAll("[data-field]").forEach((input) => {
+        input.onchange = () => saveCharacterField(input.dataset.field, input.value);
+    });
+    $("character-detail").querySelectorAll("[data-attr]").forEach((input) => {
+        input.onchange = () => saveCharacterField(input.dataset.attr, Number(input.value));
+    });
+    $("character-detail").querySelectorAll("[data-ability-rating]").forEach((input) => {
+        input.onchange = () => api().ability_save(
+            Number(input.dataset.abilityRating), Number(input.value), null);
+    });
+    $("character-detail").querySelectorAll("[data-ability-favored]").forEach((input) => {
+        input.onchange = () => api().ability_save(
+            Number(input.dataset.abilityFavored), null, input.checked);
+    });
+    $("character-detail").querySelectorAll("[data-ability-remove]").forEach((btn) => {
+        btn.onclick = async () => {
+            await api().ability_remove(Number(btn.dataset.abilityRemove));
+            pickCharacter(c.id);
+        };
+    });
+    $("ability-remove-mode").onchange = (event) => {
+        $("character-detail").querySelectorAll("[data-ability-remove]").forEach((btn) => {
+            btn.hidden = !event.target.checked;
+        });
+    };
+    $("ability-new-add").onclick = async () => {
+        const name = $("ability-new-name").value.trim();
+        if (!name) return;
+        await api().ability_add(c.id, name);
+        pickCharacter(c.id);
+    };
+    $("charm-add-open").onclick = () => startPickingCharms(c);
+    wireKnownCharmRows(c);
+
+    $("character-detail").querySelectorAll("[data-row-table]").forEach((input) => {
+        input.onchange = () => saveRow(input.dataset.rowTable,
+            Number(input.dataset.rowId), input.dataset.rowField, input.value);
+    });
+    $("character-detail").querySelectorAll("[data-row-remove]").forEach((btn) => {
+        btn.onclick = () => removeRow(btn.dataset.rowRemove);
+    });
+    $("character-detail").querySelectorAll("[data-add]").forEach((btn) => {
+        btn.onclick = () => addRow(btn.dataset.add);
+    });
+}
+
+/* Merits, Weapons, Armor, Intimacies, and Inventory are all the same shape
+   of table - rows a character owns freely - so one save/remove/add trio
+   drives all five, keyed by which table a cell or button names itself. */
+const ROW_API = {
+    merits: { save: "merit_save", remove: "merit_remove", add: "merit_add" },
+    weapons: { save: "weapon_save", remove: "weapon_remove", add: "weapon_add" },
+    armor: { save: "armor_save", remove: "armor_remove", add: "armor_add" },
+    intimacies: { save: "intimacy_save", remove: "intimacy_remove", add: "intimacy_add" },
+    inventory: { save: "inventory_save", remove: "inventory_remove", add: "inventory_add" },
+    charms_known_manual: { save: "character_save_manual_charm", add: "character_add_manual_charm" },
+    experience_purchases: { save: "experience_purchase_save", remove: "experience_purchase_remove",
+                            add: "experience_purchase_add" },
+};
+
+async function saveRow(table, id, field, value) {
+    await api()[ROW_API[table].save](id, { [field]: value });
+}
+
+async function removeRow(key) {
+    const [table, idText] = key.split(":");
+    if (!confirm("Remove this row?")) return;
+    await api()[ROW_API[table].remove](Number(idText));
+    pickCharacter(state.character.id);
+}
+
+async function addRow(table) {
+    await api()[ROW_API[table].add](state.character.id);
+    await pickCharacter(state.character.id);
+    // The new row is the last one - its own section is open (this is a
+    // re-render, so the state-restore above already saw to that) - so put
+    // the cursor straight into it rather than making the click reach again.
+    const tbody = document.querySelector(`tbody[data-rows="${table}"]`);
+    const firstInput = tbody && tbody.querySelector("tr:last-child input");
+    if (firstInput) firstInput.focus();
+}
+
+/* Drag-and-drop reordering plus a right-click View/Delete menu for the
+   Charms Known table. Native HTML5 drag-and-drop: dragstart marks the row
+   being moved, dragover on another row decides which side of it to drop on,
+   drop commits the DOM move and then tells the server the new order. */
+function wireKnownCharmRows(c) {
+    const body = $("known-charm-rows");
+    let dragging = null;
+
+    body.querySelectorAll("tr[draggable]").forEach((row) => {
+        row.ondragstart = () => { dragging = row; row.classList.add("dragging-row"); };
+        row.ondragend = () => { dragging = null; row.classList.remove("dragging-row"); };
+        row.ondragover = (event) => {
+            event.preventDefault();
+            if (!dragging || dragging === row) return;
+            const before = event.clientY < row.getBoundingClientRect().top
+                + row.getBoundingClientRect().height / 2;
+            row.parentNode.insertBefore(dragging, before ? row : row.nextSibling);
+        };
+        row.ondrop = async (event) => {
+            event.preventDefault();
+            const order = Array.from(body.querySelectorAll("tr[draggable]"))
+                .map((tr) => Number(tr.dataset.id));
+            await api().character_reorder_charms(c.id, order);
+        };
+        row.oncontextmenu = (event) => {
+            event.preventDefault();
+            const menu = $("charm-known-menu");
+            menu.dataset.linkId = row.dataset.id;
+            menu.dataset.charmId = row.dataset.charmId;
+            menu.style.left = `${event.clientX}px`;
+            menu.style.top = `${event.clientY}px`;
+            menu.classList.remove("hidden");
+        };
+    });
+}
+
+async function runKnownCharmAction(what) {
+    const menu = $("charm-known-menu");
+    const linkId = Number(menu.dataset.linkId);
+    const kc = (state.character.charms || []).find((row) => row.id === linkId);
+    if (!kc) return;
+    if (what === "view") {
+        showCharmView(kc);
+    } else if (what === "delete") {
+        if (!confirm(`Remove ${kc.name} from ${state.character.name}?`)) return;
+        await api().character_remove_charm(linkId);
+        pickCharacter(state.character.id);
+    }
+}
+
+function showCharmView(kc) {
+    const field = (label, value) => `<dt>${label}</dt><dd>${escape(value || "None")}</dd>`;
+    if (kc.manual) {
+        $("charm-view-body").innerHTML = `
+            <h2>${escape(kc.name)}</h2>
+            <dl>
+                ${field("Cost", kc.cost)}
+                ${field("Type", kc.type)}
+            </dl>
+            <textarea id="charm-view-text" style="width:100%;min-height:200px;padding:8px;
+                margin-top:16px;border:1px solid var(--rule);border-radius:var(--radius);
+                font-family:var(--read);font-size:1.14rem;resize:vertical">${escape(kc.text)}</textarea>
+            <div class="head" style="font:12px var(--mono);color:var(--muted);margin-top:8px">
+                Typed in by hand - not linked to the Charm library.</div>`;
+        $("charm-view-text").onchange = (e) => {
+            kc.text = e.target.value;
+            api().character_save_manual_charm(kc.id, { text: kc.text });
+        };
+        $("charm-view").showModal();
+        return;
+    }
+    const body = kc.simple_text && kc.simple_text.trim() ? kc.simple_text : kc.text;
+    $("charm-view-body").innerHTML = `
+        <h2>${escape(kc.name)}</h2>
+        <dl>
+            ${field("Cost", kc.cost)}
+            ${field("Mins", kc.mins)}
+            ${field("Type", kc.type)}
+            ${field("Keywords", kc.keywords)}
+            ${field("Duration", kc.duration)}
+            ${field("Prerequisite Charms", kc.prereqs)}
+        </dl>
+        <p style="font-family:var(--read);font-size:1.14rem;margin-top:16px">${escape(body)}</p>
+        <div class="head" style="font:12px var(--mono);color:var(--muted);margin-top:18px">
+            ${escape(prettyBook(kc.book))} · page ${kc.page}</div>`;
+    $("charm-view").showModal();
+}
+
+async function saveCharacterField(field, value) {
+    const c = state.character;
+    c[field] = value;
+    await api().character_save(c.id, { [field]: value });
+    if (field === "name" || field === "caste" || field === "concept") {
+        const row = state.characters.find((r) => r.id === c.id);
+        if (row) row[field] = value;
+        renderCharacterRows();
+    }
+}
+
+async function newCharacter() {
+    const c = await api().character_new();
+    await loadCharacters(true);
+    pickCharacter(c.id);
+}
+
+async function deleteCharacter() {
+    if (!state.character) return;
+    if (!confirm(`Delete ${state.character.name}? This cannot be undone.`)) return;
+    await api().character_delete(state.character.id);
+    state.character = null;
+    await loadCharacters(true);
+    if (!state.characters.length) $("character-detail").innerHTML = "";
+}
+
+/* Adding a Charm to a character happens from the Charm Library itself, not a
+   name search on the sheet: Charm names are hard to recall, but the library's
+   Book/Tree/Type/Keyword/Essence filters make one easy to find without one. */
+function startPickingCharms(character) {
+    state.pickingCharmsFor = { id: character.id, name: character.name };
+    showView("library");
+    updatePickingBanner();
+}
+
+function stopPickingCharms() {
+    state.pickingCharmsFor = null;
+    updatePickingBanner();
+    showView("characters");
+    if (state.character) pickCharacter(state.character.id);
+}
+
+function updatePickingBanner() {
+    const picking = state.pickingCharmsFor;
+    $("charm-picking-banner").classList.toggle("hidden", !picking);
+    $("charm-picking-add").classList.toggle("hidden", !picking);
+    if (picking) $("charm-picking-label").textContent = `Adding Charms to ${picking.name}`;
 }
 
 /* ------------------------------------------------------------ the book menu */
@@ -575,11 +1178,27 @@ async function askForKey() {
 
 /* ------------------------------------------------------------ text scaling */
 
-let scale = 0;
+/* Kept in localStorage - a per-viewer preference, not app state - so it
+   survives a restart instead of resetting to the default every launch. */
+function loadScale() {
+    try {
+        const saved = parseInt(localStorage.getItem("textScale"), 10);
+        return Number.isFinite(saved) ? Math.max(-3, Math.min(6, saved)) : 0;
+    } catch {
+        return 0;
+    }
+}
+
+let scale = loadScale();
 
 function scaleText(step) {
     scale = Math.max(-3, Math.min(6, scale + step));
     document.documentElement.style.fontSize = `${14 + scale}px`;
+    try {
+        localStorage.setItem("textScale", String(scale));
+    } catch {
+        /* no storage available; the choice just does not stick */
+    }
 }
 
 /* ---------------------------------------------------------- a one line ask */
@@ -860,6 +1479,14 @@ function wire() {
     $("open-pdf").onclick = openPdf;
     $("charm-form").onsubmit = runCharmSearch;
     $("charm-build").onclick = buildCharms;
+    $("char-new").onclick = newCharacter;
+    $("char-delete").onclick = deleteCharacter;
+    $("charm-picking-done").onclick = stopPickingCharms;
+    $("charm-picking-add").onclick = async () => {
+        if (!state.pickingCharmsFor || !state.charm) return;
+        await api().character_add_charm(state.pickingCharmsFor.id, state.charm.id);
+        say(`Added ${state.charm.name} to ${state.pickingCharmsFor.name}.`);
+    };
     $("charm-open").onclick = () => {
         if (!state.charm) return;
         api().open_pdf(state.charm.source || "", state.charm.page)
@@ -886,11 +1513,7 @@ function wire() {
             askQuestion($("transcript").children.length > 0);
         }
     };
-    $("shelf-toggle").onclick = () => {
-        const shelf = $("shelf");
-        shelf.classList.toggle("closed");
-        $("shelf-toggle").textContent = shelf.classList.contains("closed") ? "›" : "‹";
-    };
+    $("shelf-toggle").onclick = () => setShelfClosed(!$("shelf").classList.contains("closed"));
     document.querySelectorAll(".tab[data-view]").forEach((tab) => {
         tab.onclick = () => showView(tab.dataset.view);
     });
@@ -934,6 +1557,13 @@ function wire() {
             runBookAction(what);
         };
     });
+    $("charm-known-menu").querySelectorAll("button").forEach((item) => {
+        item.onclick = () => {
+            const what = item.dataset.do;
+            closeMenus();
+            runKnownCharmAction(what);
+        };
+    });
     $("collection-menu").querySelectorAll("button").forEach((item) => {
         item.onclick = () => {
             const menu = $("collection-menu");
@@ -954,6 +1584,7 @@ function wire() {
 
 async function boot() {
     wire();
+    scaleText(0);      // apply whatever text size was saved last launch
     setInterval(pump, 150);
     const start = await api().state();
     drawShelf(start.books, start.collection);
